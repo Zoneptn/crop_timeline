@@ -424,7 +424,7 @@ for _, row in crop_timeline.iterrows():
 
         x=midpoint,
 
-        y=-0.22,
+        y=-0.30,
 
         xref="x",
 
