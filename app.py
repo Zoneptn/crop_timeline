@@ -424,7 +424,7 @@ for _, row in crop_timeline.iterrows():
 
         x=midpoint,
 
-        y=-0.12,
+        y=-0.22,
 
         xref="x",
 
@@ -517,7 +517,7 @@ fig.update_layout(
 
         t=30,
 
-        b=120
+        b=180
     ),
 
     hovermode="closest",
