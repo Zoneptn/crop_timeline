@@ -424,7 +424,7 @@ for _, row in crop_timeline.iterrows():
 
         x=midpoint,
 
-        y=1.08,
+        y=-0.12,
 
         xref="x",
 
@@ -493,7 +493,7 @@ fig.update_layout(
 
         title="Days After Planting",
 
-        side="top",
+        side="bottom",
 
         showgrid=True,
 
@@ -515,9 +515,9 @@ fig.update_layout(
 
         r=20,
 
-        t=120,
+        t=30,
 
-        b=30
+        b=120
     ),
 
     hovermode="closest",
