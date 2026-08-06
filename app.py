@@ -35,42 +35,119 @@ def load_data(file_path):
 
     excel = pd.ExcelFile(file_path)
 
-    timeline = pd.read_excel(excel, sheet_name=0)
-    pests = pd.read_excel(excel, sheet_name=1)
-    weeds = pd.read_excel(excel, sheet_name=2)
-    diseases = pd.read_excel(excel, sheet_name=3)
-
     # -----------------------------------------
-    # Product link sheets (looked up by name,
-    # since they may not always be in the same
-    # position in the workbook)
+    # Read every sheet and clean its columns
+    # first. We then figure out WHICH sheet is
+    # which by looking at its columns, not its
+    # position or name — this way it doesn't
+    # matter what order the sheets are in, or
+    # if more sheets get added later.
     # -----------------------------------------
 
-    sheet_lookup = {
-        name.strip().lower(): name
+    def clean_columns(df):
+
+        df = df.copy()
+
+        df.columns = (
+            df.columns
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .str.replace(" ", "_")
+        )
+
+        return df
+
+    raw_sheets = {
+        name: clean_columns(pd.read_excel(excel, sheet_name=name))
         for name in excel.sheet_names
     }
 
-    def load_sheet_by_name(target_name):
+    timeline = None
+    pests = None
+    weeds = None
+    diseases = None
+    weed_her = None
+    pest_ins = None
+    disease_fun = None
 
-        key = target_name.strip().lower()
+    detected_sheets = {}
 
-        if key in sheet_lookup:
-            return pd.read_excel(
-                excel,
-                sheet_name=sheet_lookup[key]
+    for sheet_name, df in raw_sheets.items():
+
+        cols = set(df.columns)
+
+        if {"start_day", "end_day", "stage_id", "crop_id"}.issubset(cols):
+            timeline = df
+            detected_sheets["timeline"] = sheet_name
+
+        elif {"pest_id", "crop_id"}.issubset(cols) and "ins_id" not in cols:
+            pests = df
+            detected_sheets["pests"] = sheet_name
+
+        elif {"weed_id", "crop_id"}.issubset(cols) and "her_id" not in cols:
+            weeds = df
+            detected_sheets["weeds"] = sheet_name
+
+        elif {"disease_id", "crop_id"}.issubset(cols) and "fun_id" not in cols:
+            diseases = df
+            detected_sheets["diseases"] = sheet_name
+
+        elif {"pest_id", "ins_id"}.issubset(cols):
+            pest_ins = df
+            detected_sheets["pest_ins"] = sheet_name
+
+        elif {"weed_id", "her_id"}.issubset(cols):
+            weed_her = df
+            detected_sheets["weed_her"] = sheet_name
+
+        elif {"disease_id", "fun_id"}.issubset(cols):
+            disease_fun = df
+            detected_sheets["disease_fun"] = sheet_name
+
+        else:
+            detected_sheets[f"UNMATCHED: {sheet_name}"] = list(cols)
+
+    # -----------------------------------------
+    # The 4 core sheets are required
+    # -----------------------------------------
+
+    required = {
+        "crop timeline (crop_id, crop, stage_id, stage, start_day, end_day)": timeline,
+        "pest stages (crop_id, pest_id, ...)": pests,
+        "weed stages (crop_id, weed_id, ...)": weeds,
+        "disease stages (crop_id, disease_id, ...)": diseases
+    }
+
+    missing = [label for label, df in required.items() if df is None]
+
+    if missing:
+        st.error(
+            "Could not identify the following sheet(s) by their "
+            "columns — check the workbook structure:\n\n"
+            + "\n".join(f"- {m}" for m in missing)
+        )
+        st.stop()
+
+    # -----------------------------------------
+    # Product sheets are optional — warn but
+    # don't crash if one is missing
+    # -----------------------------------------
+
+    for label, df in (
+        ("weed_her", weed_her),
+        ("pest_ins", pest_ins),
+        ("disease_fun", disease_fun)
+    ):
+        if df is None:
+            st.warning(
+                f"Could not find a '{label}' sheet (matched by columns). "
+                f"Product info for this category will be unavailable."
             )
 
-        st.warning(
-            f"Sheet '{target_name}' not found in the workbook. "
-            f"Product info for this category will be unavailable."
-        )
-
-        return pd.DataFrame()
-
-    weed_her = load_sheet_by_name("weed_her")
-    pest_ins = load_sheet_by_name("pest_ins")
-    disease_fun = load_sheet_by_name("disease_fun")
+    weed_her = weed_her if weed_her is not None else pd.DataFrame()
+    pest_ins = pest_ins if pest_ins is not None else pd.DataFrame()
+    disease_fun = disease_fun if disease_fun is not None else pd.DataFrame()
 
     datasets = [
         timeline,
@@ -82,16 +159,8 @@ def load_data(file_path):
         disease_fun
     ]
 
-    # Clean column names
+    # Normalize id columns used for joins
     for df in datasets:
-
-        df.columns = (
-            df.columns
-            .astype(str)
-            .str.strip()
-            .str.lower()
-            .str.replace(" ", "_")
-        )
 
         for id_col in (
             "crop_id",
@@ -134,7 +203,8 @@ def load_data(file_path):
         diseases,
         weed_her,
         pest_ins,
-        disease_fun
+        disease_fun,
+        detected_sheets
     )
 
 
@@ -145,8 +215,39 @@ def load_data(file_path):
     diseases,
     weed_her,
     pest_ins,
-    disease_fun
+    disease_fun,
+    detected_sheets
 ) = load_data(FILE_PATH)
+
+
+# ============================================================
+# DEBUG: which physical sheet mapped to which role
+# ============================================================
+
+with st.expander("🔍 Sheet detection (debug)", expanded=False):
+
+    st.write(
+        "This shows which sheet in your workbook was matched to "
+        "each expected role, based on its columns. If a role is "
+        "missing or points to the wrong sheet, check that sheet's "
+        "column names."
+    )
+
+    st.json(detected_sheets)
+
+    st.write("Column counts detected per role:")
+
+    st.write(
+        {
+            "timeline": list(timeline.columns),
+            "pests": list(pests.columns),
+            "weeds": list(weeds.columns),
+            "diseases": list(diseases.columns),
+            "weed_her": list(weed_her.columns),
+            "pest_ins": list(pest_ins.columns),
+            "disease_fun": list(disease_fun.columns)
+        }
+    )
 
 
 # ============================================================
@@ -262,23 +363,29 @@ crop_diseases = crop_diseases.merge(
 st.header(f"🌿 {selected_crop.title()}")
 
 
+def safe_nunique(df, col):
+
+    if col not in df.columns:
+
+        st.warning(
+            f"Column '{col}' not found — showing 0. "
+            f"Check the '🔍 Sheet detection' panel above."
+        )
+
+        return 0
+
+    return df[col].nunique()
+
+
 total_days = crop_timeline["end_day"].max()
 
-total_stages = crop_timeline[
-    "stage_id"
-].nunique()
+total_stages = safe_nunique(crop_timeline, "stage_id")
 
-total_pests = crop_pests[
-    "pest_id"
-].nunique()
+total_pests = safe_nunique(crop_pests, "pest_id")
 
-total_diseases = crop_diseases[
-    "disease_id"
-].nunique()
+total_diseases = safe_nunique(crop_diseases, "disease_id")
 
-total_weeds = crop_weeds[
-    "weed_id"
-].nunique()
+total_weeds = safe_nunique(crop_weeds, "weed_id")
 
 
 c1, c2, c3, c4, c5 = st.columns(5)
