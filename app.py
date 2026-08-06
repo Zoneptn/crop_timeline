@@ -40,7 +40,47 @@ def load_data(file_path):
     weeds = pd.read_excel(excel, sheet_name=2)
     diseases = pd.read_excel(excel, sheet_name=3)
 
-    datasets = [timeline, pests, weeds, diseases]
+    # -----------------------------------------
+    # Product link sheets (looked up by name,
+    # since they may not always be in the same
+    # position in the workbook)
+    # -----------------------------------------
+
+    sheet_lookup = {
+        name.strip().lower(): name
+        for name in excel.sheet_names
+    }
+
+    def load_sheet_by_name(target_name):
+
+        key = target_name.strip().lower()
+
+        if key in sheet_lookup:
+            return pd.read_excel(
+                excel,
+                sheet_name=sheet_lookup[key]
+            )
+
+        st.warning(
+            f"Sheet '{target_name}' not found in the workbook. "
+            f"Product info for this category will be unavailable."
+        )
+
+        return pd.DataFrame()
+
+    weed_her = load_sheet_by_name("weed_her")
+    pest_ins = load_sheet_by_name("pest_ins")
+    disease_fun = load_sheet_by_name("disease_fun")
+
+    datasets = [
+        timeline,
+        pests,
+        weeds,
+        diseases,
+        weed_her,
+        pest_ins,
+        disease_fun
+    ]
 
     # Clean column names
     for df in datasets:
@@ -53,21 +93,21 @@ def load_data(file_path):
             .str.replace(" ", "_")
         )
 
-        if "crop_id" in df.columns:
-            df["crop_id"] = (
-                df["crop_id"]
-                .astype(str)
-                .str.strip()
-                .str.lower()
-            )
+        for id_col in (
+            "crop_id",
+            "stage_id",
+            "pest_id",
+            "weed_id",
+            "disease_id"
+        ):
 
-        if "stage_id" in df.columns:
-            df["stage_id"] = (
-                df["stage_id"]
-                .astype(str)
-                .str.strip()
-                .str.lower()
-            )
+            if id_col in df.columns:
+                df[id_col] = (
+                    df[id_col]
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                )
 
     # Clean crop name
     timeline["crop"] = (
@@ -87,10 +127,26 @@ def load_data(file_path):
         errors="coerce"
     )
 
-    return timeline, pests, weeds, diseases
+    return (
+        timeline,
+        pests,
+        weeds,
+        diseases,
+        weed_her,
+        pest_ins,
+        disease_fun
+    )
 
 
-timeline, pests, weeds, diseases = load_data(FILE_PATH)
+(
+    timeline,
+    pests,
+    weeds,
+    diseases,
+    weed_her,
+    pest_ins,
+    disease_fun
+) = load_data(FILE_PATH)
 
 
 # ============================================================
@@ -298,6 +354,10 @@ if timeline_category == "🐛 Insects":
 
     category_name = "Insect"
 
+    id_column = "pest_id"
+
+    product_df = pest_ins
+
 
 elif timeline_category == "🍄 Diseases":
 
@@ -309,6 +369,10 @@ elif timeline_category == "🍄 Diseases":
 
     category_name = "Disease"
 
+    id_column = "disease_id"
+
+    product_df = disease_fun
+
 
 else:
 
@@ -319,6 +383,59 @@ else:
     thai_column = "weed_name_th"
 
     category_name = "Weed"
+
+    id_column = "weed_id"
+
+    product_df = weed_her
+
+
+# ============================================================
+# PRODUCT LOOKUP (for hover text)
+# ============================================================
+
+PRODUCT_COLUMNS = [
+    "brand_name",
+    "company_name",
+    "common_name",
+    "concentration",
+    "formulation_type"
+]
+
+if not product_df.empty and id_column in product_df.columns:
+
+    product_map = (
+        product_df
+        .groupby(id_column)
+        .apply(lambda d: d.to_dict("records"))
+        .to_dict()
+    )
+
+else:
+
+    product_map = {}
+
+
+def format_products(product_id):
+
+    products = product_map.get(product_id, [])
+
+    if not products:
+        return "No registered products"
+
+    lines = []
+
+    for p in products:
+
+        parts = [
+            str(p.get(col, "")).strip()
+            for col in PRODUCT_COLUMNS
+            if str(p.get(col, "")).strip()
+            and str(p.get(col, "")).strip().lower() != "nan"
+        ]
+
+        lines.append("• " + " | ".join(parts))
+
+    return "<br>".join(lines)
 
 
 # ============================================================
@@ -362,12 +479,18 @@ if not chart_data.empty:
                 ""
             )
 
+            # Registered products for this item
+            product_text = format_products(
+                row.get(id_column)
+            )
+
             # Hover information
             hover_text = (
                 f"<b>{name}</b><br>"
                 f"{thai_name}<br><br>"
                 f"Stage: {row['stage']}<br>"
-                f"Day {start:,.0f} – {end:,.0f}"
+                f"Day {start:,.0f} – {end:,.0f}<br><br>"
+                f"<b>Products:</b><br>{product_text}"
             )
 
             fig.add_trace(
@@ -424,7 +547,7 @@ for _, row in crop_timeline.iterrows():
 
         x=midpoint,
 
-        y=-0.65,
+        y=-0.22,
 
         xref="x",
 
@@ -517,7 +640,7 @@ fig.update_layout(
 
         t=30,
 
-        b=250
+        b=180
     ),
 
     hovermode="closest",
@@ -549,6 +672,74 @@ st.caption(
     "Hover over a bar to view the Thai name, "
     "growth stage and active period."
 )
+
+
+st.divider()
+
+
+# ============================================================
+# PRODUCTS TABLE
+# ============================================================
+
+st.subheader(f"🧪 Registered Products — {category_name}s")
+
+if chart_data.empty:
+
+    st.info(
+        f"No {category_name.lower()} data recorded "
+        f"for {selected_crop}."
+    )
+
+elif product_df.empty or id_column not in product_df.columns:
+
+    st.info(
+        f"No product data available for {category_name.lower()}s."
+    )
+
+else:
+
+    item_lookup = chart_data[
+        [id_column, name_column, thai_column]
+    ].drop_duplicates()
+
+    product_table = item_lookup.merge(
+        product_df,
+        on=id_column,
+        how="inner"
+    )
+
+    if product_table.empty:
+
+        st.info(
+            f"No registered products found for "
+            f"{selected_crop} {category_name.lower()}s."
+        )
+
+    else:
+
+        rename_map = {
+            name_column: f"{category_name} (EN)",
+            thai_column: f"{category_name} (TH)",
+            "brand_name": "Brand",
+            "company_name": "Company",
+            "common_name": "Common Name",
+            "concentration": "Concentration",
+            "formulation_type": "Formulation"
+        }
+
+        display_cols = [
+            col for col in
+            [name_column, thai_column] + PRODUCT_COLUMNS
+            if col in product_table.columns
+        ]
+
+        st.dataframe(
+            product_table[display_cols].rename(
+                columns=rename_map
+            ),
+            use_container_width=True,
+            hide_index=True
+        )
 
 
 st.divider()
