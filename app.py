@@ -626,11 +626,33 @@ def normalize_text(value):
 
     text = str(value)
 
+    # Thai SARA AM decomposed form (NIKHAHIT + SARA AA) ->
+    # precomposed form. Standard Unicode NFC normalization does
+    # NOT fix this on its own — Thai text extracted from PDFs or
+    # typed on different systems can end up in either form even
+    # though both render identically as "ำ".
+    text = text.replace("\u0e4d\u0e32", "\u0e33")
+
     text = unicodedata.normalize("NFC", text)
 
-    text = text.replace("\xa0", " ")  # non-breaking space
+    # Strip invisible formatting characters (zero-width space,
+    # zero-width joiner, BOM, etc.) — these don't count as
+    # whitespace to Python's .strip()/.split(), so a company name
+    # with one hidden inside it would otherwise silently fail to
+    # match even though it looks identical on screen.
+    text = "".join(
+        ch for ch in text
+        if unicodedata.category(ch) != "Cf"
+    )
 
-    text = " ".join(text.split())  # collapse all whitespace
+    # Collapse every whitespace variant (including non-breaking
+    # space) down to single regular spaces.
+    text = "".join(
+        " " if ch.isspace() else ch
+        for ch in text
+    )
+
+    text = " ".join(text.split())
 
     return text.strip()
 
@@ -977,25 +999,25 @@ def build_reference_groups():
 
     return [
         {
-            "label": "Weed", "icon": "🌱", "data": crop_weeds,
+            "label": "Weed", "icon": "🌱", "option_label": "🌱 Weeds", "data": crop_weeds,
             "name_col": "weed_name_en", "thai_col": "weed_name_th",
             "id_col": "weed_id", "mode": "product_lookup",
             "get_trace_info": weed_info
         },
         {
-            "label": "Insect", "icon": "🐛", "data": crop_pests,
+            "label": "Insect", "icon": "🐛", "option_label": "🐛 Insects", "data": crop_pests,
             "name_col": "pest_name_en", "thai_col": "pest_name_th",
             "id_col": "pest_id", "mode": "product_lookup",
             "get_trace_info": pest_info
         },
         {
-            "label": "Disease", "icon": "🍄", "data": crop_diseases,
+            "label": "Disease", "icon": "🍄", "option_label": "🍄 Diseases", "data": crop_diseases,
             "name_col": "disease_name_en", "thai_col": "disease_name_th",
             "id_col": "disease_id", "mode": "product_lookup",
             "get_trace_info": disease_info
         },
         {
-            "label": "Fertilizer", "icon": "🧪", "data": crop_fert,
+            "label": "Fertilizer", "icon": "🧪", "option_label": "🧪 Fertilizer", "data": crop_fert,
             "name_col": "fertilizer_formula", "thai_col": None,
             "id_col": "fertilizer_id", "mode": "direct",
             "get_trace_info": fert_info
@@ -1066,28 +1088,28 @@ def build_coverage_groups(our_company_lower):
 
     groups = [
         {
-            "label": "Weed", "icon": "🌱", "data": crop_weeds,
+            "label": "Weed", "icon": "🌱", "option_label": "🌱 Weeds", "data": crop_weeds,
             "name_col": "weed_name_en",
             "get_trace_info": make_threat_info(
                 weed_product_map, "weed_name_th", "weed_id", "Weed"
             )
         },
         {
-            "label": "Insect", "icon": "🐛", "data": crop_pests,
+            "label": "Insect", "icon": "🐛", "option_label": "🐛 Insects", "data": crop_pests,
             "name_col": "pest_name_en",
             "get_trace_info": make_threat_info(
                 pest_product_map, "pest_name_th", "pest_id", "Insect"
             )
         },
         {
-            "label": "Disease", "icon": "🍄", "data": crop_diseases,
+            "label": "Disease", "icon": "🍄", "option_label": "🍄 Diseases", "data": crop_diseases,
             "name_col": "disease_name_en",
             "get_trace_info": make_threat_info(
                 disease_product_map, "disease_name_th", "disease_id", "Disease"
             )
         },
         {
-            "label": "Fertilizer", "icon": "🧪", "data": crop_fert,
+            "label": "Fertilizer", "icon": "🧪", "option_label": "🧪 Fertilizer", "data": crop_fert,
             "name_col": "fertilizer_formula",
             "get_trace_info": fert_info
         }
@@ -1171,7 +1193,7 @@ else:
 
 active_groups = [
     g for g in all_groups
-    if f"{g['icon']} {g['label']}s" in selected_categories
+    if g["option_label"] in selected_categories
 ]
 
 if not active_groups:
