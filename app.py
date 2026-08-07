@@ -78,7 +78,8 @@ def load_data(file_path):
         "diseases": ["crop_disease", "crop_diseases"],
         "weed_her": ["weed_her"],
         "pest_ins": ["pest_ins"],
-        "disease_fun": ["disease_fun"]
+        "disease_fun": ["disease_fun"],
+        "stage_fert": ["stage_fert", "crop_fert", "fert_stage", "fertilizer"]
     }
 
     assigned = {}
@@ -103,6 +104,7 @@ def load_data(file_path):
     weed_her = assigned.get("weed_her")
     pest_ins = assigned.get("pest_ins")
     disease_fun = assigned.get("disease_fun")
+    stage_fert = assigned.get("stage_fert")
 
     # -----------------------------------------
     # Fallback: for any role NOT matched by name
@@ -152,6 +154,10 @@ def load_data(file_path):
             disease_fun = df
             detected_sheets["disease_fun"] = f"{sheet_name} (matched by columns)"
 
+        elif stage_fert is None and {"stage_id", "fertilizer_id"}.issubset(cols):
+            stage_fert = df
+            detected_sheets["stage_fert"] = f"{sheet_name} (matched by columns)"
+
         else:
             detected_sheets[f"UNMATCHED: {sheet_name}"] = list(cols)
 
@@ -184,17 +190,19 @@ def load_data(file_path):
     for label, df in (
         ("weed_her", weed_her),
         ("pest_ins", pest_ins),
-        ("disease_fun", disease_fun)
+        ("disease_fun", disease_fun),
+        ("stage_fert", stage_fert)
     ):
         if df is None:
             st.warning(
                 f"Could not find a '{label}' sheet (matched by columns). "
-                f"Product info for this category will be unavailable."
+                f"That category will be unavailable."
             )
 
     weed_her = weed_her if weed_her is not None else pd.DataFrame()
     pest_ins = pest_ins if pest_ins is not None else pd.DataFrame()
     disease_fun = disease_fun if disease_fun is not None else pd.DataFrame()
+    stage_fert = stage_fert if stage_fert is not None else pd.DataFrame()
 
     datasets = [
         timeline,
@@ -203,7 +211,8 @@ def load_data(file_path):
         diseases,
         weed_her,
         pest_ins,
-        disease_fun
+        disease_fun,
+        stage_fert
     ]
 
     # Normalize id columns used for joins
@@ -214,7 +223,8 @@ def load_data(file_path):
             "stage_id",
             "pest_id",
             "weed_id",
-            "disease_id"
+            "disease_id",
+            "fertilizer_id"
         ):
 
             if id_col in df.columns:
@@ -251,6 +261,7 @@ def load_data(file_path):
         weed_her,
         pest_ins,
         disease_fun,
+        stage_fert,
         detected_sheets
     )
 
@@ -263,6 +274,7 @@ def load_data(file_path):
     weed_her,
     pest_ins,
     disease_fun,
+    stage_fert,
     detected_sheets
 ) = load_data(FILE_PATH)
 
@@ -292,7 +304,8 @@ with st.expander("🔍 Sheet detection (debug)", expanded=False):
             "diseases": list(diseases.columns),
             "weed_her": list(weed_her.columns),
             "pest_ins": list(pest_ins.columns),
-            "disease_fun": list(disease_fun.columns)
+            "disease_fun": list(disease_fun.columns),
+            "stage_fert": list(stage_fert.columns)
         }
     )
 
@@ -362,6 +375,23 @@ crop_diseases = diseases[
     diseases["crop_id"] == crop_id
 ].copy()
 
+# Fertilizer sheet carries crop_id directly, same as
+# the other 3 sheets, so filter the same way.
+if stage_fert.empty or "crop_id" not in stage_fert.columns:
+    crop_fert = stage_fert.copy()
+else:
+    crop_fert = stage_fert[
+        stage_fert["crop_id"] == crop_id
+    ].copy()
+
+    # The sheet also carries its own "stage" column,
+    # which would collide with stage_lookup's "stage"
+    # column on merge (producing stage_x/stage_y). Drop
+    # it here — we'll get the authoritative version
+    # (with matching start_day/end_day) from the merge.
+    if "stage" in crop_fert.columns:
+        crop_fert = crop_fert.drop(columns=["stage"])
+
 
 crop_timeline = crop_timeline.sort_values(
     "start_day"
@@ -369,7 +399,7 @@ crop_timeline = crop_timeline.sort_values(
 
 
 # ============================================================
-# MERGE TIMELINE DAYS INTO PEST / WEED / DISEASE
+# MERGE TIMELINE DAYS INTO PEST / WEED / DISEASE / FERTILIZER
 # ============================================================
 
 stage_lookup = crop_timeline[
@@ -401,6 +431,14 @@ crop_diseases = crop_diseases.merge(
     on="stage_id",
     how="left"
 )
+
+
+if not crop_fert.empty and "stage_id" in crop_fert.columns:
+    crop_fert = crop_fert.merge(
+        stage_lookup,
+        on="stage_id",
+        how="left"
+    )
 
 
 # ============================================================
@@ -548,7 +586,8 @@ CATEGORY_GROUPS = [
         "thai_col": "weed_name_th",
         "id_col": "weed_id",
         "product_map": weed_product_map,
-        "color": "#2ca02c"
+        "color": "#2ca02c",
+        "mode": "product_lookup"
     },
     {
         "label": "Insect",
@@ -558,7 +597,8 @@ CATEGORY_GROUPS = [
         "thai_col": "pest_name_th",
         "id_col": "pest_id",
         "product_map": pest_product_map,
-        "color": "#d62728"
+        "color": "#d62728",
+        "mode": "product_lookup"
     },
     {
         "label": "Disease",
@@ -568,7 +608,19 @@ CATEGORY_GROUPS = [
         "thai_col": "disease_name_th",
         "id_col": "disease_id",
         "product_map": disease_product_map,
-        "color": "#9467bd"
+        "color": "#9467bd",
+        "mode": "product_lookup"
+    },
+    {
+        "label": "Fertilizer",
+        "icon": "🧪",
+        "data": crop_fert,
+        "name_col": "fertilizer_formula",
+        "thai_col": None,
+        "id_col": "fertilizer_id",
+        "product_map": None,
+        "color": "#1f77b4",
+        "mode": "direct"
     }
 ]
 
@@ -602,11 +654,11 @@ subplot_titles = [
 # ============================================================
 
 fig = make_subplots(
-    rows=3,
+    rows=4,
     cols=1,
     shared_xaxes=True,
     row_heights=row_heights,
-    vertical_spacing=0.08,
+    vertical_spacing=0.06,
     subplot_titles=subplot_titles
 )
 
@@ -652,20 +704,34 @@ for row_idx, group in enumerate(CATEGORY_GROUPS, start=1):
 
             duration = end - start
 
-            thai_name = row.get(thai_column, "")
+            if group["mode"] == "direct":
 
-            product_text = format_products(
-                product_map,
-                row.get(id_column)
-            )
+                # Fertilizer: details live directly on this
+                # row, no separate product-lookup table.
+                hover_text = (
+                    f"<b>🧪 {name}</b><br>"
+                    f"Brand: {row.get('fertilizer_brand', '—')}<br>"
+                    f"Company: {row.get('fertilizer_company', '—')}<br><br>"
+                    f"Stage: {row['stage']}<br>"
+                    f"Day {start:,.0f} – {end:,.0f}"
+                )
 
-            hover_text = (
-                f"<b>{name}</b><br>"
-                f"{thai_name}<br><br>"
-                f"Stage: {row['stage']}<br>"
-                f"Day {start:,.0f} – {end:,.0f}<br><br>"
-                f"<b>Products:</b><br>{product_text}"
-            )
+            else:
+
+                thai_name = row.get(thai_column, "")
+
+                product_text = format_products(
+                    product_map,
+                    row.get(id_column)
+                )
+
+                hover_text = (
+                    f"<b>{name}</b><br>"
+                    f"{thai_name}<br><br>"
+                    f"Stage: {row['stage']}<br>"
+                    f"Day {start:,.0f} – {end:,.0f}<br><br>"
+                    f"<b>Products:</b><br>{product_text}"
+                )
 
             fig.add_trace(
                 go.Bar(
@@ -696,7 +762,7 @@ for row_idx, group in enumerate(CATEGORY_GROUPS, start=1):
 
 
 # ============================================================
-# STAGE BOUNDARIES (span all 3 groups)
+# STAGE BOUNDARIES (span all 4 groups)
 # ============================================================
 
 for _, row in crop_timeline.iterrows():
@@ -736,8 +802,8 @@ for _, row in crop_timeline.iterrows():
 
     fig.add_annotation(
         x=midpoint,
-        y=-0.20,
-        xref="x3",
+        y=-0.08,
+        xref="x4",
         yref="paper",
         text=(
             f"<b>{row['stage']}</b>"
@@ -757,8 +823,8 @@ for _, row in crop_timeline.iterrows():
 total_items = sum(row_heights)
 
 chart_height = max(
-    800,
-    total_items * 38 + 260
+    700,
+    total_items * 38 + 320
 )
 
 fig.update_layout(
@@ -771,7 +837,7 @@ fig.update_layout(
         l=20,
         r=20,
         t=50,
-        b=250
+        b=220
     ),
 
     hovermode="closest",
@@ -784,7 +850,7 @@ fig.update_xaxes(
     side="bottom",
     showgrid=True,
     zeroline=False,
-    row=3,
+    row=4,
     col=1
 )
 
@@ -802,6 +868,13 @@ fig.update_xaxes(
     col=1
 )
 
+fig.update_xaxes(
+    showgrid=True,
+    zeroline=False,
+    row=3,
+    col=1
+)
+
 
 # ============================================================
 # DISPLAY
@@ -810,7 +883,7 @@ fig.update_xaxes(
 if not any_data:
 
     st.info(
-        f"No weed, insect, or disease data recorded for {selected_crop}."
+        f"No weed, insect, disease, or fertilizer data recorded for {selected_crop}."
     )
 
 else:
@@ -838,7 +911,7 @@ st.subheader("🧪 Registered Products")
 
 table_category = st.segmented_control(
     "Product category",
-    options=["🐛 Insects", "🍄 Diseases", "🌱 Weeds"],
+    options=["🐛 Insects", "🍄 Diseases", "🌱 Weeds", "🧪 Fertilizer"],
     default="🐛 Insects",
     label_visibility="collapsed"
 )
@@ -846,7 +919,8 @@ table_category = st.segmented_control(
 table_group_map = {
     "🐛 Insects": CATEGORY_GROUPS[1],
     "🍄 Diseases": CATEGORY_GROUPS[2],
-    "🌱 Weeds": CATEGORY_GROUPS[0]
+    "🌱 Weeds": CATEGORY_GROUPS[0],
+    "🧪 Fertilizer": CATEGORY_GROUPS[3]
 }
 
 selected_group = table_group_map[table_category]
@@ -857,72 +931,112 @@ thai_column = selected_group["thai_col"]
 id_column = selected_group["id_col"]
 category_name = selected_group["label"]
 
-product_df_map = {
-    "Weed": weed_her,
-    "Insect": pest_ins,
-    "Disease": disease_fun
-}
+if selected_group["mode"] == "direct":
 
-product_df = product_df_map[category_name]
+    # Fertilizer: the sheet already IS the detail table,
+    # no separate product sheet to merge in.
 
-if chart_data.empty:
-
-    st.info(
-        f"No {category_name.lower()} data recorded "
-        f"for {selected_crop}."
-    )
-
-elif product_df.empty or id_column not in product_df.columns:
-
-    st.info(
-        f"No product data available for {category_name.lower()}s."
-    )
-
-else:
-
-    item_lookup = chart_data[
-        [id_column, name_column, thai_column]
-    ].drop_duplicates()
-
-    product_table = item_lookup.merge(
-        product_df,
-        on=id_column,
-        how="inner"
-    )
-
-    if product_table.empty:
+    if chart_data.empty:
 
         st.info(
-            f"No registered products found for "
-            f"{selected_crop} {category_name.lower()}s."
+            f"No fertilizer data recorded for {selected_crop}."
         )
 
     else:
 
         rename_map = {
-            name_column: f"{category_name} (EN)",
-            thai_column: f"{category_name} (TH)",
-            "brand_name": "Brand",
-            "company_name": "Company",
-            "common_name": "Common Name",
-            "concentration": "Concentration",
-            "formulation_type": "Formulation"
+            "stage": "Stage",
+            "fertilizer_formula": "Formula",
+            "fertilizer_brand": "Brand",
+            "fertilizer_company": "Company"
         }
 
         display_cols = [
             col for col in
-            [name_column, thai_column] + PRODUCT_COLUMNS
-            if col in product_table.columns
+            [
+                "stage",
+                "fertilizer_formula",
+                "fertilizer_brand",
+                "fertilizer_company"
+            ]
+            if col in chart_data.columns
         ]
 
         st.dataframe(
-            product_table[display_cols].rename(
-                columns=rename_map
-            ),
+            chart_data[display_cols]
+            .drop_duplicates()
+            .rename(columns=rename_map),
             width='stretch',
             hide_index=True
         )
 
+else:
+
+    product_df_map = {
+        "Weed": weed_her,
+        "Insect": pest_ins,
+        "Disease": disease_fun
+    }
+
+    product_df = product_df_map[category_name]
+
+    if chart_data.empty:
+
+        st.info(
+            f"No {category_name.lower()} data recorded "
+            f"for {selected_crop}."
+        )
+
+    elif product_df.empty or id_column not in product_df.columns:
+
+        st.info(
+            f"No product data available for {category_name.lower()}s."
+        )
+
+    else:
+
+        item_lookup = chart_data[
+            [id_column, name_column, thai_column]
+        ].drop_duplicates()
+
+        product_table = item_lookup.merge(
+            product_df,
+            on=id_column,
+            how="inner"
+        )
+
+        if product_table.empty:
+
+            st.info(
+                f"No registered products found for "
+                f"{selected_crop} {category_name.lower()}s."
+            )
+
+        else:
+
+            rename_map = {
+                name_column: f"{category_name} (EN)",
+                thai_column: f"{category_name} (TH)",
+                "brand_name": "Brand",
+                "company_name": "Company",
+                "common_name": "Common Name",
+                "concentration": "Concentration",
+                "formulation_type": "Formulation"
+            }
+
+            display_cols = [
+                col for col in
+                [name_column, thai_column] + PRODUCT_COLUMNS
+                if col in product_table.columns
+            ]
+
+            st.dataframe(
+                product_table[display_cols].rename(
+                    columns=rename_map
+                ),
+                width='stretch',
+                hide_index=True
+            )
+
 
 st.divider()
-
