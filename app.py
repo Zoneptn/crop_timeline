@@ -790,7 +790,7 @@ if not crop_timeline.empty:
 
 
 # ============================================================
-# STAGE LABELS (once, below the whole figure)
+# STAGE LABELS (top AND bottom of the whole figure)
 # ============================================================
 
 for _, row in crop_timeline.iterrows():
@@ -800,16 +800,31 @@ for _, row in crop_timeline.iterrows():
 
     midpoint = (start + end) / 2
 
+    stage_text = (
+        f"<b>{row['stage']}</b>"
+        f"<br>"
+        f"Day {start:,.0f}–{end:,.0f}"
+    )
+
+    # Bottom label — below the last (Fertilizer) row
     fig.add_annotation(
         x=midpoint,
-        y=-0.08,
+        y=-0.2,
         xref="x4",
         yref="paper",
-        text=(
-            f"<b>{row['stage']}</b>"
-            f"<br>"
-            f"Day {start:,.0f}–{end:,.0f}"
-        ),
+        text=stage_text,
+        showarrow=False,
+        align="center",
+        font=dict(size=11)
+    )
+
+    # Top label — above the first (Weeds) row, mirrored
+    fig.add_annotation(
+        x=midpoint,
+        y=1.2,
+        xref="x",
+        yref="paper",
+        text=stage_text,
         showarrow=False,
         align="center",
         font=dict(size=11)
@@ -836,8 +851,8 @@ fig.update_layout(
     margin=dict(
         l=20,
         r=20,
-        t=50,
-        b=220
+        t=250,
+        b=250
     ),
 
     hovermode="closest",
