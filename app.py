@@ -10,14 +10,14 @@ from pathlib import Path
 # ============================================================
 
 st.set_page_config(
-    page_title="Product Coverage",
-    page_icon="🎯",
+    page_title="Crop Timeline",
+    page_icon="🌱",
     layout="wide"
 )
 
 
 # ============================================================
-# FILE (same workbook as the crop timeline dashboard)
+# FILE
 # ============================================================
 
 FILE_PATH = Path("crop_timeline.xlsx")
@@ -25,9 +25,6 @@ FILE_PATH = Path("crop_timeline.xlsx")
 
 # ============================================================
 # LOAD DATA
-# (Same detection logic as the crop timeline app: match by
-# sheet NAME first, fall back to matching by COLUMNS if a
-# sheet gets renamed. Sheet order never matters.)
 # ============================================================
 
 @st.cache_data
@@ -38,6 +35,15 @@ def load_data(file_path):
         st.stop()
 
     excel = pd.ExcelFile(file_path)
+
+    # -----------------------------------------
+    # Read every sheet and clean its columns
+    # first. We then figure out WHICH sheet is
+    # which by looking at its columns, not its
+    # position or name — this way it doesn't
+    # matter what order the sheets are in, or
+    # if more sheets get added later.
+    # -----------------------------------------
 
     def clean_columns(df):
 
@@ -63,6 +69,8 @@ def load_data(file_path):
         for name in raw_sheets.keys()
     }
 
+    # Known tab names -> role. Listed in priority
+    # order; first match wins.
     name_candidates = {
         "timeline": ["crop_stage", "timeline", "crop_timeline"],
         "pests": ["crop_pest", "crop_pests"],
@@ -71,7 +79,7 @@ def load_data(file_path):
         "weed_her": ["weed_her"],
         "pest_ins": ["pest_ins"],
         "disease_fun": ["disease_fun"],
-        "stage_fert": ["fertilizer", "stage_fert", "crop_fert", "fert_stage"]
+        "stage_fert": ["stage_fert", "crop_fert", "fert_stage", "fertilizer"]
     }
 
     assigned = {}
@@ -98,7 +106,12 @@ def load_data(file_path):
     disease_fun = assigned.get("disease_fun")
     stage_fert = assigned.get("stage_fert")
 
-    # Fallback: match by columns for anything not found by name
+    # -----------------------------------------
+    # Fallback: for any role NOT matched by name
+    # (e.g. a sheet got renamed), try matching by
+    # column signature among leftover sheets.
+    # -----------------------------------------
+
     matched_sheet_names = {
         v.split(" (matched")[0] for v in detected_sheets.values()
     }
@@ -145,6 +158,13 @@ def load_data(file_path):
             stage_fert = df
             detected_sheets["stage_fert"] = f"{sheet_name} (matched by columns)"
 
+        else:
+            detected_sheets[f"UNMATCHED: {sheet_name}"] = list(cols)
+
+    # -----------------------------------------
+    # The 4 core sheets are required
+    # -----------------------------------------
+
     required = {
         "crop timeline (crop_id, crop, stage_id, stage, start_day, end_day)": timeline,
         "pest stages (crop_id, pest_id, ...)": pests,
@@ -156,10 +176,16 @@ def load_data(file_path):
 
     if missing:
         st.error(
-            "Could not identify the following sheet(s):\n\n"
+            "Could not identify the following sheet(s) by their "
+            "columns — check the workbook structure:\n\n"
             + "\n".join(f"- {m}" for m in missing)
         )
         st.stop()
+
+    # -----------------------------------------
+    # Product sheets are optional — warn but
+    # don't crash if one is missing
+    # -----------------------------------------
 
     for label, df in (
         ("weed_her", weed_her),
@@ -169,8 +195,8 @@ def load_data(file_path):
     ):
         if df is None:
             st.warning(
-                f"Could not find a '{label}' sheet — that category "
-                f"will be unavailable."
+                f"Could not find a '{label}' sheet (matched by columns). "
+                f"That category will be unavailable."
             )
 
     weed_her = weed_her if weed_her is not None else pd.DataFrame()
@@ -178,37 +204,139 @@ def load_data(file_path):
     disease_fun = disease_fun if disease_fun is not None else pd.DataFrame()
     stage_fert = stage_fert if stage_fert is not None else pd.DataFrame()
 
-    datasets = [timeline, pests, weeds, diseases, weed_her, pest_ins, disease_fun, stage_fert]
+    # -----------------------------------------
+    # Guard against Excel silently converting a
+    # value like "20-10-10" into an actual date.
+    # If that happened, pandas reads it back as a
+    # Timestamp — reconstruct it as day-month-year
+    # text so it displays as a formula again, not
+    # a date.
+    # -----------------------------------------
 
-    for df in datasets:
-        for id_col in ("crop_id", "stage_id", "pest_id", "weed_id", "disease_id", "fertilizer_id"):
-            if id_col in df.columns:
-                df[id_col] = df[id_col].astype(str).str.strip().str.lower()
-
-    # Guard against Excel silently turning a formula like
-    # "20-10-10" into an actual date.
     def fix_date_like_column(df, col):
 
         if col not in df.columns or df.empty:
             return df
 
         def restore_text(value):
+
             if isinstance(value, pd.Timestamp):
                 return f"{value.day}-{value.month}-{value.year % 100}"
+
             if pd.isna(value):
                 return ""
+
             return str(value).strip()
 
         df[col] = df[col].apply(restore_text)
+
         return df
 
     stage_fert = fix_date_like_column(stage_fert, "fertilizer_formula")
 
-    timeline["crop"] = timeline["crop"].astype(str).str.strip()
-    timeline["start_day"] = pd.to_numeric(timeline["start_day"], errors="coerce")
-    timeline["end_day"] = pd.to_numeric(timeline["end_day"], errors="coerce")
+    # -----------------------------------------
+    # Real-world column typos in the 3 product
+    # sheets: "concetration" (missing an 'n') and
+    # "formuation_type" (missing an 'l'). Rename
+    # them to the canonical spelling so the rest
+    # of the app doesn't need to know about this.
+    # -----------------------------------------
 
-    return timeline, pests, weeds, diseases, weed_her, pest_ins, disease_fun, stage_fert
+    typo_fix_map = {
+        "concetration": "concentration",
+        "formuation_type": "formulation_type"
+    }
+
+    for df in (weed_her, pest_ins, disease_fun):
+        df.rename(columns=typo_fix_map, inplace=True)
+
+    # -----------------------------------------
+    # crop_disease has a duplicated "stage_id"
+    # column in the workbook — pandas renames the
+    # second one to "stage_id.1" on read. The sheet
+    # also carries its own start_day/end_day,
+    # which would collide with stage_lookup's
+    # versions when merged later (producing
+    # start_day_x/start_day_y and silently
+    # breaking the chart). Drop all of these here
+    # so diseases gets its start_day/end_day the
+    # same way every other sheet does: from the
+    # stage merge, single source of truth.
+    # -----------------------------------------
+
+    dup_stage_cols = [
+        col for col in diseases.columns
+        if col.startswith("stage_id.")
+    ]
+
+    drop_cols = [
+        col for col in (["start_day", "end_day"] + dup_stage_cols)
+        if col in diseases.columns
+    ]
+
+    if drop_cols:
+        diseases = diseases.drop(columns=drop_cols)
+
+    datasets = [
+        timeline,
+        pests,
+        weeds,
+        diseases,
+        weed_her,
+        pest_ins,
+        disease_fun,
+        stage_fert
+    ]
+
+    # Normalize id columns used for joins
+    for df in datasets:
+
+        for id_col in (
+            "crop_id",
+            "stage_id",
+            "pest_id",
+            "weed_id",
+            "disease_id",
+            "fertilizer_id"
+        ):
+
+            if id_col in df.columns:
+                df[id_col] = (
+                    df[id_col]
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                )
+
+    # Clean crop name
+    timeline["crop"] = (
+        timeline["crop"]
+        .astype(str)
+        .str.strip()
+    )
+
+    # Numeric days
+    timeline["start_day"] = pd.to_numeric(
+        timeline["start_day"],
+        errors="coerce"
+    )
+
+    timeline["end_day"] = pd.to_numeric(
+        timeline["end_day"],
+        errors="coerce"
+    )
+
+    return (
+        timeline,
+        pests,
+        weeds,
+        diseases,
+        weed_her,
+        pest_ins,
+        disease_fun,
+        stage_fert,
+        detected_sheets
+    )
 
 
 (
@@ -219,119 +347,311 @@ def load_data(file_path):
     weed_her,
     pest_ins,
     disease_fun,
-    stage_fert
+    stage_fert,
+    detected_sheets
 ) = load_data(FILE_PATH)
 
 
 # ============================================================
-# HEADER + SIDEBAR
+# DEBUG: which physical sheet mapped to which role
 # ============================================================
 
-st.title("🎯 Product Coverage")
+with st.expander("🔍 Sheet detection (debug)", expanded=False):
+
+    st.write(
+        "This shows which sheet in your workbook was matched to "
+        "each expected role, based on its columns. If a role is "
+        "missing or points to the wrong sheet, check that sheet's "
+        "column names."
+    )
+
+    st.json(detected_sheets)
+
+    st.write("Column counts detected per role:")
+
+    st.write(
+        {
+            "timeline": list(timeline.columns),
+            "pests": list(pests.columns),
+            "weeds": list(weeds.columns),
+            "diseases": list(diseases.columns),
+            "weed_her": list(weed_her.columns),
+            "pest_ins": list(pest_ins.columns),
+            "disease_fun": list(disease_fun.columns),
+            "stage_fert": list(stage_fert.columns)
+        }
+    )
+
+
+# ============================================================
+# HEADER
+# ============================================================
+
+st.title("🌱 Crop Growth Timeline")
 
 st.caption(
-    "Green = we have a registered product for this threat. "
-    "Red = we don't (either no product exists, or only competitors do)."
+    "Crop development stages with insect pests, diseases and weeds."
 )
 
 st.divider()
 
-st.sidebar.header("Settings")
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+st.sidebar.header("Crop Selection")
 
 if st.sidebar.button("🔄 Reload data"):
     load_data.clear()
     st.rerun()
 
-our_company = st.sidebar.text_input(
-    "Your company name",
-    value="SAC",
-    help="Matched case-insensitively against the 'company_name' column."
-).strip().lower()
+crop_list = (
+    timeline["crop"]
+    .dropna()
+    .sort_values()
+    .unique()
+)
 
-crop_list = timeline["crop"].dropna().sort_values().unique()
-
-selected_crop = st.sidebar.selectbox("Select Crop", crop_list)
+selected_crop = st.sidebar.selectbox(
+    "Select Crop",
+    crop_list
+)
 
 
 # ============================================================
-# FILTER TO SELECTED CROP
+# GET CROP ID
 # ============================================================
 
-crop_id = timeline.loc[timeline["crop"] == selected_crop, "crop_id"].iloc[0]
+crop_id = (
+    timeline.loc[
+        timeline["crop"] == selected_crop,
+        "crop_id"
+    ]
+    .iloc[0]
+)
 
-crop_timeline = timeline[timeline["crop_id"] == crop_id].copy().sort_values("start_day")
 
-crop_pests = pests[pests["crop_id"] == crop_id].copy()
-crop_weeds = weeds[weeds["crop_id"] == crop_id].copy()
-crop_diseases = diseases[diseases["crop_id"] == crop_id].copy()
+# ============================================================
+# FILTER CROP
+# ============================================================
 
+crop_timeline = timeline[
+    timeline["crop_id"] == crop_id
+].copy()
+
+crop_pests = pests[
+    pests["crop_id"] == crop_id
+].copy()
+
+crop_weeds = weeds[
+    weeds["crop_id"] == crop_id
+].copy()
+
+crop_diseases = diseases[
+    diseases["crop_id"] == crop_id
+].copy()
+
+# Fertilizer sheet carries crop_id directly, same as
+# the other 3 sheets, so filter the same way.
 if stage_fert.empty or "crop_id" not in stage_fert.columns:
     crop_fert = stage_fert.copy()
 else:
-    crop_fert = stage_fert[stage_fert["crop_id"] == crop_id].copy()
+    crop_fert = stage_fert[
+        stage_fert["crop_id"] == crop_id
+    ].copy()
+
+    # The sheet also carries its own "stage" column,
+    # which would collide with stage_lookup's "stage"
+    # column on merge (producing stage_x/stage_y). Drop
+    # it here — we'll get the authoritative version
+    # (with matching start_day/end_day) from the merge.
     if "stage" in crop_fert.columns:
         crop_fert = crop_fert.drop(columns=["stage"])
 
-stage_lookup = crop_timeline[["stage_id", "stage", "start_day", "end_day"]].drop_duplicates()
 
-crop_pests = crop_pests.merge(stage_lookup, on="stage_id", how="left")
-crop_weeds = crop_weeds.merge(stage_lookup, on="stage_id", how="left")
-crop_diseases = crop_diseases.merge(stage_lookup, on="stage_id", how="left")
+crop_timeline = crop_timeline.sort_values(
+    "start_day"
+)
+
+
+# ============================================================
+# MERGE TIMELINE DAYS INTO PEST / WEED / DISEASE / FERTILIZER
+# ============================================================
+
+stage_lookup = crop_timeline[
+    [
+        "stage_id",
+        "stage",
+        "start_day",
+        "end_day"
+    ]
+].drop_duplicates()
+
+
+crop_pests = crop_pests.merge(
+    stage_lookup,
+    on="stage_id",
+    how="left"
+)
+
+
+crop_weeds = crop_weeds.merge(
+    stage_lookup,
+    on="stage_id",
+    how="left"
+)
+
+
+crop_diseases = crop_diseases.merge(
+    stage_lookup,
+    on="stage_id",
+    how="left"
+)
+
 
 if not crop_fert.empty and "stage_id" in crop_fert.columns:
-    crop_fert = crop_fert.merge(stage_lookup, on="stage_id", how="left")
+    crop_fert = crop_fert.merge(
+        stage_lookup,
+        on="stage_id",
+        how="left"
+    )
 
 
 # ============================================================
-# COVERAGE LOOKUP
-# For each item id, figure out:
-#   - covered: True if any product row's company matches ours
-#   - companies: the set of companies that DO have a product
-#     (useful to see who the competitors are)
+# SUMMARY
 # ============================================================
 
-def build_coverage_map(product_df, id_column, our_company_lower):
+st.header(f"🌿 {selected_crop.title()}")
 
-    coverage = {}
+
+def safe_nunique(df, col):
+
+    if col not in df.columns:
+
+        st.warning(
+            f"Column '{col}' not found — showing 0. "
+            f"Check the '🔍 Sheet detection' panel above."
+        )
+
+        return 0
+
+    return df[col].nunique()
+
+
+total_days = crop_timeline["end_day"].max()
+
+total_stages = safe_nunique(crop_timeline, "stage_id")
+
+total_pests = safe_nunique(crop_pests, "pest_id")
+
+total_diseases = safe_nunique(crop_diseases, "disease_id")
+
+total_weeds = safe_nunique(crop_weeds, "weed_id")
+
+
+c1, c2, c3, c4, c5 = st.columns(5)
+
+
+c1.metric(
+    "Growth Period",
+    f"{total_days:,.0f} days"
+)
+
+c2.metric(
+    "Growth Stages",
+    total_stages
+)
+
+c3.metric(
+    "Insect Pests",
+    total_pests
+)
+
+c4.metric(
+    "Diseases",
+    total_diseases
+)
+
+c5.metric(
+    "Weeds",
+    total_weeds
+)
+
+
+st.divider()
+
+
+# ============================================================
+# MAIN TIMELINE
+# ============================================================
+
+st.header("📅 Crop Timeline")
+
+st.caption(
+    "Weeds, insects, and diseases across crop growth stages — "
+    "each row is one item, grouped by category."
+)
+
+
+# ============================================================
+# PRODUCT LOOKUPS
+# ============================================================
+
+PRODUCT_COLUMNS = [
+    "brand_name",
+    "company_name",
+    "common_name",
+    "concentration",
+    "formulation_type"
+]
+
+
+def build_product_map(product_df, id_column):
 
     if product_df.empty or id_column not in product_df.columns:
-        return coverage
+        return {}
 
-    for item_id, group in product_df.groupby(id_column):
-
-        companies = (
-            group.get("company_name", pd.Series(dtype=str))
-            .dropna()
-            .astype(str)
-            .str.strip()
-            .unique()
-            .tolist()
-        )
-
-        is_covered = any(
-            our_company_lower in c.lower()
-            for c in companies
-        )
-
-        coverage[item_id] = {
-            "covered": is_covered,
-            "companies": companies
-        }
-
-    return coverage
+    return (
+        product_df
+        .groupby(id_column)
+        .apply(lambda d: d.to_dict("records"))
+        .to_dict()
+    )
 
 
-weed_coverage = build_coverage_map(weed_her, "weed_id", our_company)
-pest_coverage = build_coverage_map(pest_ins, "pest_id", our_company)
-disease_coverage = build_coverage_map(disease_fun, "disease_id", our_company)
+def format_products(product_map, product_id):
+
+    products = product_map.get(product_id, [])
+
+    if not products:
+        return "No registered products"
+
+    lines = []
+
+    for p in products:
+
+        parts = [
+            str(p.get(col, "")).strip()
+            for col in PRODUCT_COLUMNS
+            if str(p.get(col, "")).strip()
+            and str(p.get(col, "")).strip().lower() != "nan"
+        ]
+
+        lines.append("• " + " | ".join(parts))
+
+    return "<br>".join(lines)
 
 
-COVERED_COLOR = "#2ca02c"    # green
-NOT_COVERED_COLOR = "#d62728"  # red
+weed_product_map = build_product_map(weed_her, "weed_id")
+
+pest_product_map = build_product_map(pest_ins, "pest_id")
+
+disease_product_map = build_product_map(disease_fun, "disease_id")
 
 
 # ============================================================
-# CATEGORY GROUPS
+# CATEGORY GROUPS (order = Weeds, Insects, Diseases)
 # ============================================================
 
 CATEGORY_GROUPS = [
@@ -342,8 +662,9 @@ CATEGORY_GROUPS = [
         "name_col": "weed_name_en",
         "thai_col": "weed_name_th",
         "id_col": "weed_id",
-        "coverage_map": weed_coverage,
-        "mode": "coverage_lookup"
+        "product_map": weed_product_map,
+        "color": "#2ca02c",
+        "mode": "product_lookup"
     },
     {
         "label": "Insect",
@@ -352,8 +673,9 @@ CATEGORY_GROUPS = [
         "name_col": "pest_name_en",
         "thai_col": "pest_name_th",
         "id_col": "pest_id",
-        "coverage_map": pest_coverage,
-        "mode": "coverage_lookup"
+        "product_map": pest_product_map,
+        "color": "#d62728",
+        "mode": "product_lookup"
     },
     {
         "label": "Disease",
@@ -362,8 +684,9 @@ CATEGORY_GROUPS = [
         "name_col": "disease_name_en",
         "thai_col": "disease_name_th",
         "id_col": "disease_id",
-        "coverage_map": disease_coverage,
-        "mode": "coverage_lookup"
+        "product_map": disease_product_map,
+        "color": "#9467bd",
+        "mode": "product_lookup"
     },
     {
         "label": "Fertilizer",
@@ -372,26 +695,27 @@ CATEGORY_GROUPS = [
         "name_col": "fertilizer_formula",
         "thai_col": None,
         "id_col": "fertilizer_id",
-        "coverage_map": None,
-        # This sheet only ever contains OUR fertilizer
-        # recommendations — no competitor data. So any row
-        # present means "we have it": always green, no
-        # company-matching needed.
-        "mode": "always_covered"
+        "product_map": None,
+        "color": "#1f77b4",
+        "mode": "direct"
     }
 ]
 
 
 # ============================================================
-# CATEGORY SELECTOR
+# CATEGORY SELECTOR (choose which panels to show)
 # ============================================================
 
-category_options = [f"{g['icon']} {g['label']}s" for g in CATEGORY_GROUPS]
+category_options = [
+    f"{g['icon']} {g['label']}s"
+    for g in CATEGORY_GROUPS
+]
 
 selected_categories = st.multiselect(
     "Categories to show",
     options=category_options,
-    default=category_options
+    default=category_options,
+    help="Remove a category to hide its panel. Leave all selected to see everything together."
 )
 
 active_groups = [
@@ -405,44 +729,8 @@ if not active_groups:
 
 
 # ============================================================
-# SUMMARY METRICS (coverage %)
-# ============================================================
-
-summary_cols = st.columns(len(active_groups))
-
-for col, group in zip(summary_cols, active_groups):
-
-    data = group["data"]
-    name_col = group["name_col"]
-    id_col = group["id_col"]
-    coverage_map = group["coverage_map"]
-
-    if data.empty or name_col not in data.columns:
-        col.metric(f"{group['icon']} {group['label']}s covered", "—")
-        continue
-
-    unique_ids = data[id_col].dropna().unique()
-
-    total = len(unique_ids)
-
-    if group["mode"] == "always_covered":
-        covered = total
-    else:
-        covered = sum(
-            1 for i in unique_ids
-            if coverage_map.get(i, {}).get("covered", False)
-        )
-
-    pct = f"{covered}/{total}" if total else "—"
-
-    col.metric(f"{group['icon']} {group['label']}s covered", pct)
-
-
-st.divider()
-
-
-# ============================================================
-# ROW SIZING
+# ROW SIZING (each active group gets height proportional to
+# its item count, with a minimum so empty groups don't vanish)
 # ============================================================
 
 for group in active_groups:
@@ -453,7 +741,10 @@ for group in active_groups:
         group["item_count"] = group["data"][group["name_col"]].nunique()
 
 
-row_heights = [max(g["item_count"], 1) for g in active_groups]
+row_heights = [
+    max(g["item_count"], 1)
+    for g in active_groups
+]
 
 subplot_titles = [
     f"{g['icon']} {g['label']}s ({g['item_count']})"
@@ -464,7 +755,7 @@ num_rows = len(active_groups)
 
 
 # ============================================================
-# BUILD FIGURE
+# BUILD UNIFIED FIGURE
 # ============================================================
 
 fig = make_subplots(
@@ -472,29 +763,41 @@ fig = make_subplots(
     cols=1,
     shared_xaxes=True,
     row_heights=row_heights,
-    vertical_spacing=0.08,
+    vertical_spacing=0.06,
     subplot_titles=subplot_titles
 )
 
+
 any_data = False
-legend_shown = {"covered": False, "not_covered": False}
 
 for row_idx, group in enumerate(active_groups, start=1):
 
     chart_data = group["data"]
+
     name_column = group["name_col"]
+
     thai_column = group["thai_col"]
+
     id_column = group["id_col"]
-    coverage_map = group["coverage_map"]
+
+    product_map = group["product_map"]
+
+    color = group["color"]
 
     if chart_data.empty or name_column not in chart_data.columns:
         continue
 
-    unique_items = chart_data[name_column].dropna().unique()
+    unique_items = (
+        chart_data[name_column]
+        .dropna()
+        .unique()
+    )
 
     for name in unique_items:
 
-        item_data = chart_data[chart_data[name_column] == name].sort_values("start_day")
+        item_data = chart_data[
+            chart_data[name_column] == name
+        ].sort_values("start_day")
 
         for _, row in item_data.iterrows():
 
@@ -506,13 +809,10 @@ for row_idx, group in enumerate(active_groups, start=1):
 
             duration = end - start
 
-            if group["mode"] == "always_covered":
+            if group["mode"] == "direct":
 
-                # Fertilizer: presence = we have it, always green.
-                # No coverage lookup, no competitor info.
-                is_covered = True
-                color = COVERED_COLOR
-
+                # Fertilizer: details live directly on this
+                # row, no separate product-lookup table.
                 hover_text = (
                     f"<b>🧪 {name}</b><br>"
                     f"Brand: {row.get('fertilizer_brand', '—')}<br>"
@@ -521,46 +821,22 @@ for row_idx, group in enumerate(active_groups, start=1):
                     f"Day {start:,.0f} – {end:,.0f}"
                 )
 
-                legend_key = "fertilizer"
-                trace_name = "Our fertilizer recommendation"
-
             else:
 
                 thai_name = row.get(thai_column, "")
 
-                item_id = row.get(id_column)
-
-                info = coverage_map.get(item_id, {"covered": False, "companies": []})
-
-                is_covered = info["covered"]
-
-                companies = info["companies"]
-
-                color = COVERED_COLOR if is_covered else NOT_COVERED_COLOR
-
-                if is_covered:
-                    status_line = f"✅ We have a product ({our_company.upper()})"
-                elif companies:
-                    status_line = (
-                        "❌ No product from us — only: "
-                        + ", ".join(companies)
-                    )
-                else:
-                    status_line = "❌ No registered product at all"
+                product_text = format_products(
+                    product_map,
+                    row.get(id_column)
+                )
 
                 hover_text = (
                     f"<b>{name}</b><br>"
                     f"{thai_name}<br><br>"
                     f"Stage: {row['stage']}<br>"
                     f"Day {start:,.0f} – {end:,.0f}<br><br>"
-                    f"{status_line}"
+                    f"<b>Products:</b><br>{product_text}"
                 )
-
-                legend_key = "covered" if is_covered else "not_covered"
-                trace_name = "We have a product" if is_covered else "No product from us"
-
-            show_legend = not legend_shown.get(legend_key, False)
-            legend_shown[legend_key] = True
 
             fig.add_trace(
                 go.Bar(
@@ -569,10 +845,11 @@ for row_idx, group in enumerate(active_groups, start=1):
                     base=[start],
                     orientation="h",
                     marker_color=color,
-                    hovertemplate=hover_text + "<extra></extra>",
-                    name=trace_name,
-                    legendgroup=legend_key,
-                    showlegend=show_legend
+                    hovertemplate=(
+                        hover_text
+                        + "<extra></extra>"
+                    ),
+                    showlegend=False
                 ),
                 row=row_idx,
                 col=1
@@ -590,60 +867,120 @@ for row_idx, group in enumerate(active_groups, start=1):
 
 
 # ============================================================
-# STAGE BOUNDARIES + LABELS
+# STAGE BOUNDARIES (span all 4 groups)
 # ============================================================
 
 for _, row in crop_timeline.iterrows():
 
-    fig.add_vline(x=row["start_day"], line_width=1, line_dash="dot", row="all", col=1)
+    start = row["start_day"]
+
+    fig.add_vline(
+        x=start,
+        line_width=1,
+        line_dash="dot",
+        row="all",
+        col=1
+    )
+
 
 if not crop_timeline.empty:
-    fig.add_vline(x=crop_timeline["end_day"].max(), line_width=1, line_dash="dot", row="all", col=1)
+
+    fig.add_vline(
+        x=crop_timeline["end_day"].max(),
+        line_width=1,
+        line_dash="dot",
+        row="all",
+        col=1
+    )
+
+
+# ============================================================
+# STAGE LABELS (top AND bottom of the whole figure)
+# ============================================================
 
 for _, row in crop_timeline.iterrows():
 
     start = row["start_day"]
     end = row["end_day"]
+
     midpoint = (start + end) / 2
 
-    stage_text = f"<b>{row['stage']}</b><br>Day {start:,.0f}–{end:,.0f}"
-
-    xref_bottom = f"x{num_rows}" if num_rows > 1 else "x"
-
-    fig.add_annotation(
-        x=midpoint, y=-0.15, xref=xref_bottom, yref="paper",
-        text=stage_text, showarrow=False, align="center", font=dict(size=11)
+    stage_text = (
+        f"<b>{row['stage']}</b>"
+        f"<br>"
+        f"Day {start:,.0f}–{end:,.0f}"
     )
 
+    # Bottom label — below the last active row
     fig.add_annotation(
-        x=midpoint, y=1.15, xref="x", yref="paper",
-        text=stage_text, showarrow=False, align="center", font=dict(size=11)
+        x=midpoint,
+        y=-0.2,
+        xref=f"x{num_rows}" if num_rows > 1 else "x",
+        yref="paper",
+        text=stage_text,
+        showarrow=False,
+        align="center",
+        font=dict(size=11)
+    )
+
+    # Top label — above the first active row, mirrored
+    fig.add_annotation(
+        x=midpoint,
+        y=1.2,
+        xref="x",
+        yref="paper",
+        text=stage_text,
+        showarrow=False,
+        align="center",
+        font=dict(size=11)
     )
 
 
 # ============================================================
-# LAYOUT
+# CHART LAYOUT
 # ============================================================
 
 total_items = sum(row_heights)
 
-chart_height = max(600, total_items * 38 + 260)
+chart_height = max(
+    700,
+    total_items * 38 + 320
+)
 
 fig.update_layout(
+
     barmode="overlay",
+
     height=chart_height,
-    margin=dict(l=20, r=20, t=180, b=180),
+
+    margin=dict(
+        l=20,
+        r=20,
+        t=250,
+        b=250
+    ),
+
     hovermode="closest",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+
+    showlegend=False
 )
 
 fig.update_xaxes(
-    title="Days After Planting", side="bottom", showgrid=True, zeroline=False,
-    row=num_rows, col=1
+    title="Days After Planting",
+    side="bottom",
+    showgrid=True,
+    zeroline=False,
+    row=num_rows,
+    col=1
 )
 
 for r in range(1, num_rows):
-    fig.update_xaxes(showgrid=True, zeroline=False, row=r, col=1)
+    fig.update_xaxes(
+        showgrid=True,
+        zeroline=False,
+        row=r,
+        col=1
+    )
 
 
 # ============================================================
@@ -651,11 +988,162 @@ for r in range(1, num_rows):
 # ============================================================
 
 if not any_data:
-    st.info(f"No data recorded for {selected_crop}.")
+
+    st.info(
+        f"No weed, insect, disease, or fertilizer data recorded for {selected_crop}."
+    )
+
 else:
-    st.plotly_chart(fig, width='stretch')
+
+    st.plotly_chart(
+        fig,
+        width='stretch'
+    )
+
 
 st.caption(
-    "Hover over a bar to see which companies (if any) have a "
-    "registered product for that threat."
+    "Hover over a bar to view the Thai name, growth stage, "
+    "active period, and registered products."
 )
+
+
+st.divider()
+
+
+# ============================================================
+# PRODUCTS TABLE
+# ============================================================
+
+st.subheader("🧪 Registered Products")
+
+table_category = st.segmented_control(
+    "Product category",
+    options=["🐛 Insects", "🍄 Diseases", "🌱 Weeds", "🧪 Fertilizer"],
+    default="🐛 Insects",
+    label_visibility="collapsed"
+)
+
+table_group_map = {
+    "🐛 Insects": CATEGORY_GROUPS[1],
+    "🍄 Diseases": CATEGORY_GROUPS[2],
+    "🌱 Weeds": CATEGORY_GROUPS[0],
+    "🧪 Fertilizer": CATEGORY_GROUPS[3]
+}
+
+selected_group = table_group_map[table_category]
+
+chart_data = selected_group["data"]
+name_column = selected_group["name_col"]
+thai_column = selected_group["thai_col"]
+id_column = selected_group["id_col"]
+category_name = selected_group["label"]
+
+if selected_group["mode"] == "direct":
+
+    # Fertilizer: the sheet already IS the detail table,
+    # no separate product sheet to merge in.
+
+    if chart_data.empty:
+
+        st.info(
+            f"No fertilizer data recorded for {selected_crop}."
+        )
+
+    else:
+
+        rename_map = {
+            "stage": "Stage",
+            "fertilizer_formula": "Formula",
+            "fertilizer_brand": "Brand",
+            "fertilizer_company": "Company"
+        }
+
+        display_cols = [
+            col for col in
+            [
+                "stage",
+                "fertilizer_formula",
+                "fertilizer_brand",
+                "fertilizer_company"
+            ]
+            if col in chart_data.columns
+        ]
+
+        st.dataframe(
+            chart_data[display_cols]
+            .drop_duplicates()
+            .rename(columns=rename_map),
+            width='stretch',
+            hide_index=True
+        )
+
+else:
+
+    product_df_map = {
+        "Weed": weed_her,
+        "Insect": pest_ins,
+        "Disease": disease_fun
+    }
+
+    product_df = product_df_map[category_name]
+
+    if chart_data.empty:
+
+        st.info(
+            f"No {category_name.lower()} data recorded "
+            f"for {selected_crop}."
+        )
+
+    elif product_df.empty or id_column not in product_df.columns:
+
+        st.info(
+            f"No product data available for {category_name.lower()}s."
+        )
+
+    else:
+
+        item_lookup = chart_data[
+            [id_column, name_column, thai_column]
+        ].drop_duplicates()
+
+        product_table = item_lookup.merge(
+            product_df,
+            on=id_column,
+            how="inner"
+        )
+
+        if product_table.empty:
+
+            st.info(
+                f"No registered products found for "
+                f"{selected_crop} {category_name.lower()}s."
+            )
+
+        else:
+
+            rename_map = {
+                name_column: f"{category_name} (EN)",
+                thai_column: f"{category_name} (TH)",
+                "brand_name": "Brand",
+                "company_name": "Company",
+                "common_name": "Common Name",
+                "concentration": "Concentration",
+                "formulation_type": "Formulation"
+            }
+
+            display_cols = [
+                col for col in
+                [name_column, thai_column] + PRODUCT_COLUMNS
+                if col in product_table.columns
+            ]
+
+            st.dataframe(
+                product_table[display_cols].rename(
+                    columns=rename_map
+                ),
+                width='stretch',
+                hide_index=True
+            )
+
+
+st.divider()
