@@ -660,6 +660,72 @@ CATEGORY_GROUPS = [
 
 
 # ============================================================
+# SEARCH / FILTER (per category, narrows what's plotted)
+# ============================================================
+
+st.caption(
+    "Type in a box below to narrow down that category — "
+    "leave blank to show everything."
+)
+
+filter_cols = st.columns(4)
+
+search_terms = {}
+
+for col, group in zip(filter_cols, CATEGORY_GROUPS):
+
+    search_terms[group["label"]] = col.text_input(
+        f"{group['icon']} {group['label']}s",
+        value="",
+        placeholder=f"Search {group['label'].lower()}s...",
+        key=f"search_{group['label']}"
+    )
+
+for group in CATEGORY_GROUPS:
+
+    term = search_terms[group["label"]].strip().lower()
+
+    data = group["data"]
+
+    if term and not data.empty:
+
+        name_col = group["name_col"]
+        thai_col = group["thai_col"]
+
+        mask = pd.Series(False, index=data.index)
+
+        if name_col in data.columns:
+            mask = mask | (
+                data[name_col]
+                .astype(str)
+                .str.lower()
+                .str.contains(term, na=False)
+            )
+
+        if thai_col and thai_col in data.columns:
+            mask = mask | (
+                data[thai_col]
+                .astype(str)
+                .str.lower()
+                .str.contains(term, na=False)
+            )
+
+        # Fertilizer has no name/thai split — also let
+        # the search match brand or company.
+        if group["mode"] == "direct":
+            for extra_col in ("fertilizer_brand", "fertilizer_company"):
+                if extra_col in data.columns:
+                    mask = mask | (
+                        data[extra_col]
+                        .astype(str)
+                        .str.lower()
+                        .str.contains(term, na=False)
+                    )
+
+        group["data"] = data[mask].copy()
+
+
+# ============================================================
 # ROW SIZING (each group gets height proportional to its
 # item count, with a minimum so empty groups don't vanish)
 # ============================================================
