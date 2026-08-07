@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
 import unicodedata
+import datetime
 
 
 # ============================================================
@@ -221,8 +223,17 @@ def load_data(file_path):
 
         def restore_text(value):
 
-            if isinstance(value, pd.Timestamp):
-                return f"{value.day}-{value.month}-{value.year % 100}"
+            # Excel/pandas can hand back a date-corrupted value as
+            # several different types depending on how it was read
+            # — pd.Timestamp, numpy.datetime64, or plain
+            # datetime.date/datetime.datetime. Catch all of them.
+            if isinstance(value, (pd.Timestamp, datetime.date, datetime.datetime)):
+                d = pd.Timestamp(value)
+                return f"{d.day}-{d.month}-{d.year % 100}"
+
+            if isinstance(value, np.datetime64):
+                d = pd.Timestamp(value)
+                return f"{d.day}-{d.month}-{d.year % 100}"
 
             if pd.isna(value):
                 return ""
@@ -853,6 +864,7 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
                 any_data = True
 
         fig.update_yaxes(
+            type="category",
             autorange="reversed",
             automargin=True,
             title="",
