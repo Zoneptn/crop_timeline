@@ -1343,7 +1343,10 @@ if dashboard_view == "📅 Reference Timeline":
             st.dataframe(
                 chart_data[display_cols].drop_duplicates().rename(columns=rename_map),
                 width='stretch',
-                hide_index=True
+                hide_index=True,
+                column_config={
+                    "Formula": st.column_config.TextColumn("Formula")
+                }
             )
 
     else:
