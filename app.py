@@ -707,7 +707,12 @@ def format_products(product_map, product_id):
 
 
 def compute_coverage(product_map, item_id, our_company_lower):
-    """Returns (is_covered, list_of_normalized_company_names)."""
+    """Returns (is_covered, list_of_normalized_company_names, our_products).
+
+    our_products is the list of raw product records (brand_name,
+    common_name, etc.) whose company matches ours — used to show
+    exactly which product(s) we have, not just that we have one.
+    """
 
     products = product_map.get(item_id, [])
 
@@ -717,12 +722,35 @@ def compute_coverage(product_map, item_id, our_company_lower):
         if normalize_text(p.get("company_name", ""))
     })
 
-    is_covered = any(
-        our_company_lower in c.lower()
-        for c in companies
-    )
+    our_products = [
+        p for p in products
+        if our_company_lower in normalize_text(p.get("company_name", "")).lower()
+    ]
 
-    return is_covered, companies
+    is_covered = len(our_products) > 0
+
+    return is_covered, companies, our_products
+
+
+def format_our_products(our_products):
+    """Bullet list of brand + common name for each of our products.
+    Single product still gets a bullet, for visual consistency."""
+
+    lines = []
+
+    for p in our_products:
+
+        brand = str(p.get("brand_name", "")).strip()
+        common = str(p.get("common_name", "")).strip()
+
+        parts = [
+            v for v in (brand, common)
+            if v and v.lower() != "nan"
+        ]
+
+        lines.append("• " + " — ".join(parts) if parts else "• (unnamed product)")
+
+    return "<br>".join(lines) if lines else "• (product details unavailable)"
 
 
 weed_product_map = build_product_map(weed_her, "weed_id")
@@ -1039,7 +1067,7 @@ def build_coverage_groups(our_company_lower):
 
             item_id = row.get(id_col)
 
-            is_covered, companies = compute_coverage(
+            is_covered, companies, our_products = compute_coverage(
                 product_map, item_id, our_company_lower
             )
 
@@ -1048,7 +1076,8 @@ def build_coverage_groups(our_company_lower):
             color = COVERED_COLOR if is_covered else NOT_COVERED_COLOR
 
             if is_covered:
-                status = "✅ We have a product"
+                product_list = format_our_products(our_products)
+                status = f"✅ We have a product:<br>{product_list}"
             elif companies:
                 status = "❌ No product from us — only: " + ", ".join(companies)
             else:
@@ -1064,11 +1093,23 @@ def build_coverage_groups(our_company_lower):
             legend_key = "covered" if is_covered else "not_covered"
             trace_name = "We have a product" if is_covered else "No product from us"
 
+            our_product_names = "; ".join(
+                " — ".join(
+                    v for v in (
+                        str(p.get("brand_name", "")).strip(),
+                        str(p.get("common_name", "")).strip()
+                    )
+                    if v and v.lower() != "nan"
+                )
+                for p in our_products
+            )
+
             coverage_debug_rows.append({
                 "Category": category_label,
                 "Item": name,
                 "Item ID": item_id,
                 "Covered": "✅" if is_covered else "❌",
+                "Our product(s)": our_product_names if our_product_names else "—",
                 "Companies found": ", ".join(companies) if companies else "(none)"
             })
 
