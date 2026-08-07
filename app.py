@@ -26,6 +26,10 @@ FILE_PATH = Path("crop_timeline.xlsx")
 # ============================================================
 # LOAD DATA
 # ============================================================
+if st.sidebar.button("🔄 Reload data"):
+    load_data.clear()
+    st.rerun()
+
 
 @st.cache_data
 def load_data(file_path):
@@ -539,7 +543,7 @@ st.divider()
 # MAIN TIMELINE
 # ============================================================
 
-st.header("📅 Crop Timeline")
+st.header(" Crop Timeline")
 
 st.caption(
     "Weeds, insects, and diseases across crop growth stages — "
