@@ -204,6 +204,36 @@ def load_data(file_path):
     disease_fun = disease_fun if disease_fun is not None else pd.DataFrame()
     stage_fert = stage_fert if stage_fert is not None else pd.DataFrame()
 
+    # -----------------------------------------
+    # Guard against Excel silently converting a
+    # value like "20-10-10" into an actual date.
+    # If that happened, pandas reads it back as a
+    # Timestamp — reconstruct it as day-month-year
+    # text so it displays as a formula again, not
+    # a date.
+    # -----------------------------------------
+
+    def fix_date_like_column(df, col):
+
+        if col not in df.columns or df.empty:
+            return df
+
+        def restore_text(value):
+
+            if isinstance(value, pd.Timestamp):
+                return f"{value.day}-{value.month}-{value.year % 100}"
+
+            if pd.isna(value):
+                return ""
+
+            return str(value).strip()
+
+        df[col] = df[col].apply(restore_text)
+
+        return df
+
+    stage_fert = fix_date_like_column(stage_fert, "fertilizer_formula")
+
     datasets = [
         timeline,
         pests,
