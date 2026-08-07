@@ -660,77 +660,37 @@ CATEGORY_GROUPS = [
 
 
 # ============================================================
-# SEARCH / FILTER (per category, narrows what's plotted)
+# CATEGORY SELECTOR (choose which panels to show)
 # ============================================================
 
-st.caption(
-    "Type in a box below to narrow down that category — "
-    "leave blank to show everything."
+category_options = [
+    f"{g['icon']} {g['label']}s"
+    for g in CATEGORY_GROUPS
+]
+
+selected_categories = st.multiselect(
+    "Categories to show",
+    options=category_options,
+    default=category_options,
+    help="Remove a category to hide its panel. Leave all selected to see everything together."
 )
 
-filter_cols = st.columns(4)
+active_groups = [
+    g for g, opt in zip(CATEGORY_GROUPS, category_options)
+    if opt in selected_categories
+]
 
-search_terms = {}
-
-for col, group in zip(filter_cols, CATEGORY_GROUPS):
-
-    search_terms[group["label"]] = col.text_input(
-        f"{group['icon']} {group['label']}s",
-        value="",
-        placeholder=f"Search {group['label'].lower()}s...",
-        key=f"search_{group['label']}"
-    )
-
-for group in CATEGORY_GROUPS:
-
-    term = search_terms[group["label"]].strip().lower()
-
-    data = group["data"]
-
-    if term and not data.empty:
-
-        name_col = group["name_col"]
-        thai_col = group["thai_col"]
-
-        mask = pd.Series(False, index=data.index)
-
-        if name_col in data.columns:
-            mask = mask | (
-                data[name_col]
-                .astype(str)
-                .str.lower()
-                .str.contains(term, na=False)
-            )
-
-        if thai_col and thai_col in data.columns:
-            mask = mask | (
-                data[thai_col]
-                .astype(str)
-                .str.lower()
-                .str.contains(term, na=False)
-            )
-
-        # Fertilizer has no name/thai split — also let
-        # the search match brand or company.
-        if group["mode"] == "direct":
-            for extra_col in ("fertilizer_brand", "fertilizer_company"):
-                if extra_col in data.columns:
-                    mask = mask | (
-                        data[extra_col]
-                        .astype(str)
-                        .str.lower()
-                        .str.contains(term, na=False)
-                    )
-
-        group["data"] = data[mask].copy()
+if not active_groups:
+    st.info("Select at least one category above to see the chart.")
+    st.stop()
 
 
 # ============================================================
-# ROW SIZING (each group gets height proportional to its
-# item count, with a minimum so empty groups don't vanish)
+# ROW SIZING (each active group gets height proportional to
+# its item count, with a minimum so empty groups don't vanish)
 # ============================================================
 
-for group in CATEGORY_GROUPS:
+for group in active_groups:
 
     if group["data"].empty or group["name_col"] not in group["data"].columns:
         group["item_count"] = 0
@@ -740,13 +700,15 @@ for group in CATEGORY_GROUPS:
 
 row_heights = [
     max(g["item_count"], 1)
-    for g in CATEGORY_GROUPS
+    for g in active_groups
 ]
 
 subplot_titles = [
     f"{g['icon']} {g['label']}s ({g['item_count']})"
-    for g in CATEGORY_GROUPS
+    for g in active_groups
 ]
+
+num_rows = len(active_groups)
 
 
 # ============================================================
@@ -754,7 +716,7 @@ subplot_titles = [
 # ============================================================
 
 fig = make_subplots(
-    rows=4,
+    rows=num_rows,
     cols=1,
     shared_xaxes=True,
     row_heights=row_heights,
@@ -765,7 +727,7 @@ fig = make_subplots(
 
 any_data = False
 
-for row_idx, group in enumerate(CATEGORY_GROUPS, start=1):
+for row_idx, group in enumerate(active_groups, start=1):
 
     chart_data = group["data"]
 
@@ -906,11 +868,11 @@ for _, row in crop_timeline.iterrows():
         f"Day {start:,.0f}–{end:,.0f}"
     )
 
-    # Bottom label — below the last (Fertilizer) row
+    # Bottom label — below the last active row
     fig.add_annotation(
         x=midpoint,
         y=-0.2,
-        xref="x4",
+        xref=f"x{num_rows}" if num_rows > 1 else "x",
         yref="paper",
         text=stage_text,
         showarrow=False,
@@ -918,7 +880,7 @@ for _, row in crop_timeline.iterrows():
         font=dict(size=11)
     )
 
-    # Top label — above the first (Weeds) row, mirrored
+    # Top label — above the first active row, mirrored
     fig.add_annotation(
         x=midpoint,
         y=1.2,
@@ -965,30 +927,17 @@ fig.update_xaxes(
     side="bottom",
     showgrid=True,
     zeroline=False,
-    row=4,
+    row=num_rows,
     col=1
 )
 
-fig.update_xaxes(
-    showgrid=True,
-    zeroline=False,
-    row=1,
-    col=1
-)
-
-fig.update_xaxes(
-    showgrid=True,
-    zeroline=False,
-    row=2,
-    col=1
-)
-
-fig.update_xaxes(
-    showgrid=True,
-    zeroline=False,
-    row=3,
-    col=1
-)
+for r in range(1, num_rows):
+    fig.update_xaxes(
+        showgrid=True,
+        zeroline=False,
+        row=r,
+        col=1
+    )
 
 
 # ============================================================
