@@ -70,7 +70,8 @@ def load_data(file_path):
         "diseases": ["crop_disease", "crop_diseases"],
         "weed_her": ["weed_her"],
         "pest_ins": ["pest_ins"],
-        "disease_fun": ["disease_fun"]
+        "disease_fun": ["disease_fun"],
+        "stage_fert": ["fertilizer", "stage_fert", "crop_fert", "fert_stage"]
     }
 
     assigned = {}
@@ -95,6 +96,7 @@ def load_data(file_path):
     weed_her = assigned.get("weed_her")
     pest_ins = assigned.get("pest_ins")
     disease_fun = assigned.get("disease_fun")
+    stage_fert = assigned.get("stage_fert")
 
     # Fallback: match by columns for anything not found by name
     matched_sheet_names = {
@@ -139,6 +141,10 @@ def load_data(file_path):
             disease_fun = df
             detected_sheets["disease_fun"] = f"{sheet_name} (matched by columns)"
 
+        elif stage_fert is None and {"stage_id", "fertilizer_id"}.issubset(cols):
+            stage_fert = df
+            detected_sheets["stage_fert"] = f"{sheet_name} (matched by columns)"
+
     required = {
         "crop timeline (crop_id, crop, stage_id, stage, start_day, end_day)": timeline,
         "pest stages (crop_id, pest_id, ...)": pests,
@@ -158,30 +164,51 @@ def load_data(file_path):
     for label, df in (
         ("weed_her", weed_her),
         ("pest_ins", pest_ins),
-        ("disease_fun", disease_fun)
+        ("disease_fun", disease_fun),
+        ("stage_fert", stage_fert)
     ):
         if df is None:
             st.warning(
                 f"Could not find a '{label}' sheet — that category "
-                f"will show as 'no product' everywhere."
+                f"will be unavailable."
             )
 
     weed_her = weed_her if weed_her is not None else pd.DataFrame()
     pest_ins = pest_ins if pest_ins is not None else pd.DataFrame()
     disease_fun = disease_fun if disease_fun is not None else pd.DataFrame()
+    stage_fert = stage_fert if stage_fert is not None else pd.DataFrame()
 
-    datasets = [timeline, pests, weeds, diseases, weed_her, pest_ins, disease_fun]
+    datasets = [timeline, pests, weeds, diseases, weed_her, pest_ins, disease_fun, stage_fert]
 
     for df in datasets:
-        for id_col in ("crop_id", "stage_id", "pest_id", "weed_id", "disease_id"):
+        for id_col in ("crop_id", "stage_id", "pest_id", "weed_id", "disease_id", "fertilizer_id"):
             if id_col in df.columns:
                 df[id_col] = df[id_col].astype(str).str.strip().str.lower()
+
+    # Guard against Excel silently turning a formula like
+    # "20-10-10" into an actual date.
+    def fix_date_like_column(df, col):
+
+        if col not in df.columns or df.empty:
+            return df
+
+        def restore_text(value):
+            if isinstance(value, pd.Timestamp):
+                return f"{value.day}-{value.month}-{value.year % 100}"
+            if pd.isna(value):
+                return ""
+            return str(value).strip()
+
+        df[col] = df[col].apply(restore_text)
+        return df
+
+    stage_fert = fix_date_like_column(stage_fert, "fertilizer_formula")
 
     timeline["crop"] = timeline["crop"].astype(str).str.strip()
     timeline["start_day"] = pd.to_numeric(timeline["start_day"], errors="coerce")
     timeline["end_day"] = pd.to_numeric(timeline["end_day"], errors="coerce")
 
-    return timeline, pests, weeds, diseases, weed_her, pest_ins, disease_fun
+    return timeline, pests, weeds, diseases, weed_her, pest_ins, disease_fun, stage_fert
 
 
 (
@@ -191,7 +218,8 @@ def load_data(file_path):
     diseases,
     weed_her,
     pest_ins,
-    disease_fun
+    disease_fun,
+    stage_fert
 ) = load_data(FILE_PATH)
 
 
@@ -237,11 +265,21 @@ crop_pests = pests[pests["crop_id"] == crop_id].copy()
 crop_weeds = weeds[weeds["crop_id"] == crop_id].copy()
 crop_diseases = diseases[diseases["crop_id"] == crop_id].copy()
 
+if stage_fert.empty or "crop_id" not in stage_fert.columns:
+    crop_fert = stage_fert.copy()
+else:
+    crop_fert = stage_fert[stage_fert["crop_id"] == crop_id].copy()
+    if "stage" in crop_fert.columns:
+        crop_fert = crop_fert.drop(columns=["stage"])
+
 stage_lookup = crop_timeline[["stage_id", "stage", "start_day", "end_day"]].drop_duplicates()
 
 crop_pests = crop_pests.merge(stage_lookup, on="stage_id", how="left")
 crop_weeds = crop_weeds.merge(stage_lookup, on="stage_id", how="left")
 crop_diseases = crop_diseases.merge(stage_lookup, on="stage_id", how="left")
+
+if not crop_fert.empty and "stage_id" in crop_fert.columns:
+    crop_fert = crop_fert.merge(stage_lookup, on="stage_id", how="left")
 
 
 # ============================================================
@@ -304,7 +342,8 @@ CATEGORY_GROUPS = [
         "name_col": "weed_name_en",
         "thai_col": "weed_name_th",
         "id_col": "weed_id",
-        "coverage_map": weed_coverage
+        "coverage_map": weed_coverage,
+        "mode": "coverage_lookup"
     },
     {
         "label": "Insect",
@@ -313,7 +352,8 @@ CATEGORY_GROUPS = [
         "name_col": "pest_name_en",
         "thai_col": "pest_name_th",
         "id_col": "pest_id",
-        "coverage_map": pest_coverage
+        "coverage_map": pest_coverage,
+        "mode": "coverage_lookup"
     },
     {
         "label": "Disease",
@@ -322,7 +362,22 @@ CATEGORY_GROUPS = [
         "name_col": "disease_name_en",
         "thai_col": "disease_name_th",
         "id_col": "disease_id",
-        "coverage_map": disease_coverage
+        "coverage_map": disease_coverage,
+        "mode": "coverage_lookup"
+    },
+    {
+        "label": "Fertilizer",
+        "icon": "🧪",
+        "data": crop_fert,
+        "name_col": "fertilizer_formula",
+        "thai_col": None,
+        "id_col": "fertilizer_id",
+        "coverage_map": None,
+        # This sheet only ever contains OUR fertilizer
+        # recommendations — no competitor data. So any row
+        # present means "we have it": always green, no
+        # company-matching needed.
+        "mode": "always_covered"
     }
 ]
 
@@ -370,10 +425,13 @@ for col, group in zip(summary_cols, active_groups):
 
     total = len(unique_ids)
 
-    covered = sum(
-        1 for i in unique_ids
-        if coverage_map.get(i, {}).get("covered", False)
-    )
+    if group["mode"] == "always_covered":
+        covered = total
+    else:
+        covered = sum(
+            1 for i in unique_ids
+            if coverage_map.get(i, {}).get("covered", False)
+        )
 
     pct = f"{covered}/{total}" if total else "—"
 
@@ -448,38 +506,60 @@ for row_idx, group in enumerate(active_groups, start=1):
 
             duration = end - start
 
-            thai_name = row.get(thai_column, "")
+            if group["mode"] == "always_covered":
 
-            item_id = row.get(id_column)
+                # Fertilizer: presence = we have it, always green.
+                # No coverage lookup, no competitor info.
+                is_covered = True
+                color = COVERED_COLOR
 
-            info = coverage_map.get(item_id, {"covered": False, "companies": []})
-
-            is_covered = info["covered"]
-
-            companies = info["companies"]
-
-            color = COVERED_COLOR if is_covered else NOT_COVERED_COLOR
-
-            if is_covered:
-                status_line = f"✅ We have a product ({our_company.upper()})"
-            elif companies:
-                status_line = (
-                    "❌ No product from us — only: "
-                    + ", ".join(companies)
+                hover_text = (
+                    f"<b>🧪 {name}</b><br>"
+                    f"Brand: {row.get('fertilizer_brand', '—')}<br>"
+                    f"Company: {row.get('fertilizer_company', '—')}<br><br>"
+                    f"Stage: {row['stage']}<br>"
+                    f"Day {start:,.0f} – {end:,.0f}"
                 )
+
+                legend_key = "fertilizer"
+                trace_name = "Our fertilizer recommendation"
+
             else:
-                status_line = "❌ No registered product at all"
 
-            hover_text = (
-                f"<b>{name}</b><br>"
-                f"{thai_name}<br><br>"
-                f"Stage: {row['stage']}<br>"
-                f"Day {start:,.0f} – {end:,.0f}<br><br>"
-                f"{status_line}"
-            )
+                thai_name = row.get(thai_column, "")
 
-            legend_key = "covered" if is_covered else "not_covered"
-            show_legend = not legend_shown[legend_key]
+                item_id = row.get(id_column)
+
+                info = coverage_map.get(item_id, {"covered": False, "companies": []})
+
+                is_covered = info["covered"]
+
+                companies = info["companies"]
+
+                color = COVERED_COLOR if is_covered else NOT_COVERED_COLOR
+
+                if is_covered:
+                    status_line = f"✅ We have a product ({our_company.upper()})"
+                elif companies:
+                    status_line = (
+                        "❌ No product from us — only: "
+                        + ", ".join(companies)
+                    )
+                else:
+                    status_line = "❌ No registered product at all"
+
+                hover_text = (
+                    f"<b>{name}</b><br>"
+                    f"{thai_name}<br><br>"
+                    f"Stage: {row['stage']}<br>"
+                    f"Day {start:,.0f} – {end:,.0f}<br><br>"
+                    f"{status_line}"
+                )
+
+                legend_key = "covered" if is_covered else "not_covered"
+                trace_name = "We have a product" if is_covered else "No product from us"
+
+            show_legend = not legend_shown.get(legend_key, False)
             legend_shown[legend_key] = True
 
             fig.add_trace(
@@ -490,7 +570,7 @@ for row_idx, group in enumerate(active_groups, start=1):
                     orientation="h",
                     marker_color=color,
                     hovertemplate=hover_text + "<extra></extra>",
-                    name="We have a product" if is_covered else "No product from us",
+                    name=trace_name,
                     legendgroup=legend_key,
                     showlegend=show_legend
                 ),
