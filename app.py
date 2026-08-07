@@ -757,7 +757,7 @@ for _, row in crop_timeline.iterrows():
 total_items = sum(row_heights)
 
 chart_height = max(
-    600,
+    800,
     total_items * 38 + 260
 )
 
@@ -771,7 +771,7 @@ fig.update_layout(
         l=20,
         r=20,
         t=50,
-        b=250
+        b=300
     ),
 
     hovermode="closest",
