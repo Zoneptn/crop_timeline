@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from pathlib import Path
 
 
@@ -63,47 +64,93 @@ def load_data(file_path):
         for name in excel.sheet_names
     }
 
-    timeline = None
-    pests = None
-    weeds = None
-    diseases = None
-    weed_her = None
-    pest_ins = None
-    disease_fun = None
+    sheet_lookup = {
+        name.strip().lower(): name
+        for name in raw_sheets.keys()
+    }
 
+    # Known tab names -> role. Listed in priority
+    # order; first match wins.
+    name_candidates = {
+        "timeline": ["crop_stage", "timeline", "crop_timeline"],
+        "pests": ["crop_pest", "crop_pests"],
+        "weeds": ["crop_weeds", "crop_weed"],
+        "diseases": ["crop_disease", "crop_diseases"],
+        "weed_her": ["weed_her"],
+        "pest_ins": ["pest_ins"],
+        "disease_fun": ["disease_fun"]
+    }
+
+    assigned = {}
     detected_sheets = {}
 
-    for sheet_name, df in raw_sheets.items():
+    for role, candidates in name_candidates.items():
+
+        for candidate in candidates:
+
+            key = candidate.strip().lower()
+
+            if key in sheet_lookup:
+                actual_name = sheet_lookup[key]
+                assigned[role] = raw_sheets[actual_name]
+                detected_sheets[role] = f"{actual_name} (matched by name)"
+                break
+
+    timeline = assigned.get("timeline")
+    pests = assigned.get("pests")
+    weeds = assigned.get("weeds")
+    diseases = assigned.get("diseases")
+    weed_her = assigned.get("weed_her")
+    pest_ins = assigned.get("pest_ins")
+    disease_fun = assigned.get("disease_fun")
+
+    # -----------------------------------------
+    # Fallback: for any role NOT matched by name
+    # (e.g. a sheet got renamed), try matching by
+    # column signature among leftover sheets.
+    # -----------------------------------------
+
+    matched_sheet_names = {
+        v.split(" (matched")[0] for v in detected_sheets.values()
+    }
+
+    leftover_sheets = {
+        name: df
+        for name, df in raw_sheets.items()
+        if name not in matched_sheet_names
+    }
+
+    for sheet_name, df in leftover_sheets.items():
 
         cols = set(df.columns)
 
-        if {"start_day", "end_day", "stage_id", "crop_id"}.issubset(cols):
+        if timeline is None and {"start_day", "end_day", "stage_id", "crop_id"}.issubset(cols):
             timeline = df
-            detected_sheets["timeline"] = sheet_name
+            detected_sheets["timeline"] = f"{sheet_name} (matched by columns)"
 
-        elif {"pest_id", "crop_id"}.issubset(cols) and "ins_id" not in cols:
+        elif pests is None and {"pest_id", "crop_id"}.issubset(cols) and "ins_id" not in cols:
             pests = df
-            detected_sheets["pests"] = sheet_name
+            detected_sheets["pests"] = f"{sheet_name} (matched by columns)"
 
-        elif {"weed_id", "crop_id"}.issubset(cols) and "her_id" not in cols:
+        elif weeds is None and {"weed_id", "crop_id"}.issubset(cols) and "her_id" not in cols:
             weeds = df
-            detected_sheets["weeds"] = sheet_name
+            detected_sheets["weeds"] = f"{sheet_name} (matched by columns)"
 
-        elif {"disease_id", "crop_id"}.issubset(cols) and "fun_id" not in cols:
+        elif diseases is None and {"disease_id", "crop_id"}.issubset(cols) and "fun_id" not in cols:
             diseases = df
-            detected_sheets["diseases"] = sheet_name
+            detected_sheets["diseases"] = f"{sheet_name} (matched by columns)"
 
-        elif {"pest_id", "ins_id"}.issubset(cols):
+        elif pest_ins is None and {"pest_id", "ins_id"}.issubset(cols):
             pest_ins = df
-            detected_sheets["pest_ins"] = sheet_name
+            detected_sheets["pest_ins"] = f"{sheet_name} (matched by columns)"
 
-        elif {"weed_id", "her_id"}.issubset(cols):
+        elif weed_her is None and {"weed_id", "her_id"}.issubset(cols):
             weed_her = df
-            detected_sheets["weed_her"] = sheet_name
+            detected_sheets["weed_her"] = f"{sheet_name} (matched by columns)"
 
-        elif {"disease_id", "fun_id"}.issubset(cols):
+        elif disease_fun is None and {"disease_id", "fun_id"}.issubset(cols):
             disease_fun = df
-            detected_sheets["disease_fun"] = sheet_name
+            detected_sheets["disease_fun"] = f"{sheet_name} (matched by columns)"
 
         else:
             detected_sheets[f"UNMATCHED: {sheet_name}"] = list(cols)
@@ -427,77 +474,13 @@ st.divider()
 st.header("📅 Crop Timeline")
 
 st.caption(
-    "Select a category to view its occurrence across crop growth stages."
+    "Weeds, insects, and diseases across crop growth stages — "
+    "each row is one item, grouped by category."
 )
 
 
 # ============================================================
-# CATEGORY SELECTOR
-# ============================================================
-
-timeline_category = st.segmented_control(
-    "Timeline category",
-    options=[
-        "🐛 Insects",
-        "🍄 Diseases",
-        "🌱 Weeds"
-    ],
-    default="🐛 Insects",
-    label_visibility="collapsed"
-)
-
-
-# ============================================================
-# SELECT DATA BASED ON CATEGORY
-# ============================================================
-
-if timeline_category == "🐛 Insects":
-
-    chart_data = crop_pests.copy()
-
-    name_column = "pest_name_en"
-
-    thai_column = "pest_name_th"
-
-    category_name = "Insect"
-
-    id_column = "pest_id"
-
-    product_df = pest_ins
-
-
-elif timeline_category == "🍄 Diseases":
-
-    chart_data = crop_diseases.copy()
-
-    name_column = "disease_name_en"
-
-    thai_column = "disease_name_th"
-
-    category_name = "Disease"
-
-    id_column = "disease_id"
-
-    product_df = disease_fun
-
-
-else:
-
-    chart_data = crop_weeds.copy()
-
-    name_column = "weed_name_en"
-
-    thai_column = "weed_name_th"
-
-    category_name = "Weed"
-
-    id_column = "weed_id"
-
-    product_df = weed_her
-
-
-# ============================================================
-# PRODUCT LOOKUP (for hover text)
+# PRODUCT LOOKUPS
 # ============================================================
 
 PRODUCT_COLUMNS = [
@@ -508,21 +491,21 @@ PRODUCT_COLUMNS = [
     "formulation_type"
 ]
 
-if not product_df.empty and id_column in product_df.columns:
 
-    product_map = (
+def build_product_map(product_df, id_column):
+
+    if product_df.empty or id_column not in product_df.columns:
+        return {}
+
+    return (
         product_df
         .groupby(id_column)
         .apply(lambda d: d.to_dict("records"))
         .to_dict()
     )
 
-else:
 
-    product_map = {}
-
-
-def format_products(product_id):
+def format_products(product_map, product_id):
 
     products = product_map.get(product_id, [])
 
@@ -545,18 +528,107 @@ def format_products(product_id):
     return "<br>".join(lines)
 
 
+weed_product_map = build_product_map(weed_her, "weed_id")
+
+pest_product_map = build_product_map(pest_ins, "pest_id")
+
+disease_product_map = build_product_map(disease_fun, "disease_id")
+
+
 # ============================================================
-# CREATE TIMELINE
+# CATEGORY GROUPS (order = Weeds, Insects, Diseases)
 # ============================================================
 
-fig = go.Figure()
+CATEGORY_GROUPS = [
+    {
+        "label": "Weed",
+        "icon": "🌱",
+        "data": crop_weeds,
+        "name_col": "weed_name_en",
+        "thai_col": "weed_name_th",
+        "id_col": "weed_id",
+        "product_map": weed_product_map,
+        "color": "#2ca02c"
+    },
+    {
+        "label": "Insect",
+        "icon": "🐛",
+        "data": crop_pests,
+        "name_col": "pest_name_en",
+        "thai_col": "pest_name_th",
+        "id_col": "pest_id",
+        "product_map": pest_product_map,
+        "color": "#d62728"
+    },
+    {
+        "label": "Disease",
+        "icon": "🍄",
+        "data": crop_diseases,
+        "name_col": "disease_name_en",
+        "thai_col": "disease_name_th",
+        "id_col": "disease_id",
+        "product_map": disease_product_map,
+        "color": "#9467bd"
+    }
+]
 
 
 # ============================================================
-# ADD ITEMS
+# ROW SIZING (each group gets height proportional to its
+# item count, with a minimum so empty groups don't vanish)
 # ============================================================
 
-if not chart_data.empty:
+for group in CATEGORY_GROUPS:
+
+    if group["data"].empty or group["name_col"] not in group["data"].columns:
+        group["item_count"] = 0
+    else:
+        group["item_count"] = group["data"][group["name_col"]].nunique()
+
+
+row_heights = [
+    max(g["item_count"], 1)
+    for g in CATEGORY_GROUPS
+]
+
+subplot_titles = [
+    f"{g['icon']} {g['label']}s ({g['item_count']})"
+    for g in CATEGORY_GROUPS
+]
+
+
+# ============================================================
+# BUILD UNIFIED FIGURE
+# ============================================================
+
+fig = make_subplots(
+    rows=3,
+    cols=1,
+    shared_xaxes=True,
+    row_heights=row_heights,
+    vertical_spacing=0.08,
+    subplot_titles=subplot_titles
+)
+
+
+any_data = False
+
+for row_idx, group in enumerate(CATEGORY_GROUPS, start=1):
+
+    chart_data = group["data"]
+
+    name_column = group["name_col"]
+
+    thai_column = group["thai_col"]
+
+    id_column = group["id_col"]
+
+    product_map = group["product_map"]
+
+    color = group["color"]
+
+    if chart_data.empty or name_column not in chart_data.columns:
+        continue
 
     unique_items = (
         chart_data[name_column]
@@ -580,18 +652,13 @@ if not chart_data.empty:
 
             duration = end - start
 
-            # Thai name
-            thai_name = row.get(
-                thai_column,
-                ""
-            )
+            thai_name = row.get(thai_column, "")
 
-            # Registered products for this item
             product_text = format_products(
+                product_map,
                 row.get(id_column)
             )
 
-            # Hover information
             hover_text = (
                 f"<b>{name}</b><br>"
                 f"{thai_name}<br><br>"
@@ -606,19 +673,58 @@ if not chart_data.empty:
                     y=[name],
                     base=[start],
                     orientation="h",
-
+                    marker_color=color,
                     hovertemplate=(
                         hover_text
                         + "<extra></extra>"
                     ),
-
                     showlegend=False
-                )
+                ),
+                row=row_idx,
+                col=1
             )
+
+            any_data = True
+
+    fig.update_yaxes(
+        autorange="reversed",
+        automargin=True,
+        title="",
+        row=row_idx,
+        col=1
+    )
 
 
 # ============================================================
-# ADD STAGE BOUNDARIES
+# STAGE BOUNDARIES (span all 3 groups)
+# ============================================================
+
+for _, row in crop_timeline.iterrows():
+
+    start = row["start_day"]
+
+    fig.add_vline(
+        x=start,
+        line_width=1,
+        line_dash="dot",
+        row="all",
+        col=1
+    )
+
+
+if not crop_timeline.empty:
+
+    fig.add_vline(
+        x=crop_timeline["end_day"].max(),
+        line_width=1,
+        line_dash="dot",
+        row="all",
+        col=1
+    )
+
+
+# ============================================================
+# STAGE LABELS (once, below the whole figure)
 # ============================================================
 
 for _, row in crop_timeline.iterrows():
@@ -626,92 +732,34 @@ for _, row in crop_timeline.iterrows():
     start = row["start_day"]
     end = row["end_day"]
 
-    # -----------------------------------------
-    # Vertical line at beginning of stage
-    # -----------------------------------------
-
-    fig.add_vline(
-        x=start,
-        line_width=1,
-        line_dash="dot"
-    )
-
-
-    # -----------------------------------------
-    # Stage label position
-    # -----------------------------------------
-
-    midpoint = (
-        start + end
-    ) / 2
-
-
-    # -----------------------------------------
-    # Stage name above chart
-    # -----------------------------------------
+    midpoint = (start + end) / 2
 
     fig.add_annotation(
-
         x=midpoint,
-
-        y=-0.22,
-
-        xref="x",
-
+        y=-0.06,
+        xref="x3",
         yref="paper",
-
         text=(
             f"<b>{row['stage']}</b>"
             f"<br>"
             f"Day {start:,.0f}–{end:,.0f}"
         ),
-
         showarrow=False,
-
         align="center",
-
-        font=dict(
-            size=11
-        )
+        font=dict(size=11)
     )
-
-
-# ============================================================
-# FINAL STAGE BOUNDARY
-# ============================================================
-
-if not crop_timeline.empty:
-
-    fig.add_vline(
-
-        x=crop_timeline[
-            "end_day"
-        ].max(),
-
-        line_width=1,
-
-        line_dash="dot"
-    )
-
-
-# ============================================================
-# CHART HEIGHT
-# ============================================================
-
-number_items = chart_data[
-    name_column
-].nunique()
-
-
-chart_height = max(
-    450,
-    number_items * 42
-)
 
 
 # ============================================================
 # CHART LAYOUT
 # ============================================================
+
+total_items = sum(row_heights)
+
+chart_height = max(
+    600,
+    total_items * 38 + 260
+)
 
 fig.update_layout(
 
@@ -719,34 +767,10 @@ fig.update_layout(
 
     height=chart_height,
 
-    xaxis=dict(
-
-        title="Days After Planting",
-
-        side="bottom",
-
-        showgrid=True,
-
-        zeroline=False
-    ),
-
-    yaxis=dict(
-
-        title="",
-
-        autorange="reversed",
-
-        automargin=True
-    ),
-
     margin=dict(
-
         l=20,
-
         r=20,
-
-        t=30,
-
+        t=50,
         b=180
     ),
 
@@ -755,29 +779,51 @@ fig.update_layout(
     showlegend=False
 )
 
+fig.update_xaxes(
+    title="Days After Planting",
+    side="bottom",
+    showgrid=True,
+    zeroline=False,
+    row=3,
+    col=1
+)
+
+fig.update_xaxes(
+    showgrid=True,
+    zeroline=False,
+    row=1,
+    col=1
+)
+
+fig.update_xaxes(
+    showgrid=True,
+    zeroline=False,
+    row=2,
+    col=1
+)
+
 
 # ============================================================
 # DISPLAY
 # ============================================================
 
-if chart_data.empty:
+if not any_data:
 
     st.info(
-        f"No {category_name.lower()} data "
-        f"recorded for {selected_crop}."
+        f"No weed, insect, or disease data recorded for {selected_crop}."
     )
 
 else:
 
     st.plotly_chart(
         fig,
-        use_container_width=True
+        width='stretch'
     )
 
 
 st.caption(
-    "Hover over a bar to view the Thai name, "
-    "growth stage and active period."
+    "Hover over a bar to view the Thai name, growth stage, "
+    "active period, and registered products."
 )
 
 
@@ -788,7 +834,36 @@ st.divider()
 # PRODUCTS TABLE
 # ============================================================
 
-st.subheader(f"🧪 Registered Products — {category_name}s")
+st.subheader("🧪 Registered Products")
+
+table_category = st.segmented_control(
+    "Product category",
+    options=["🐛 Insects", "🍄 Diseases", "🌱 Weeds"],
+    default="🐛 Insects",
+    label_visibility="collapsed"
+)
+
+table_group_map = {
+    "🐛 Insects": CATEGORY_GROUPS[1],
+    "🍄 Diseases": CATEGORY_GROUPS[2],
+    "🌱 Weeds": CATEGORY_GROUPS[0]
+}
+
+selected_group = table_group_map[table_category]
+
+chart_data = selected_group["data"]
+name_column = selected_group["name_col"]
+thai_column = selected_group["thai_col"]
+id_column = selected_group["id_col"]
+category_name = selected_group["label"]
+
+product_df_map = {
+    "Weed": weed_her,
+    "Insect": pest_ins,
+    "Disease": disease_fun
+}
+
+product_df = product_df_map[category_name]
 
 if chart_data.empty:
 
@@ -844,9 +919,10 @@ else:
             product_table[display_cols].rename(
                 columns=rename_map
             ),
-            use_container_width=True,
+            width='stretch',
             hide_index=True
         )
 
 
 st.divider()
+
