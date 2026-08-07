@@ -4,3 +4,5 @@ openpyxl
 plotly
 pathlib
 utils
+unicodedata
+datetime
