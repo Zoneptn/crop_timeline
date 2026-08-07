@@ -736,7 +736,7 @@ for _, row in crop_timeline.iterrows():
 
     fig.add_annotation(
         x=midpoint,
-        y=-0.75,
+        y=-0.30,
         xref="x3",
         yref="paper",
         text=(
@@ -771,7 +771,7 @@ fig.update_layout(
         l=20,
         r=20,
         t=50,
-        b=300
+        b=250
     ),
 
     hovermode="closest",
