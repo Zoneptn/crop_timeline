@@ -513,43 +513,54 @@ crop_timeline = crop_timeline.sort_values(
 
 
 # ============================================================
-# MERGE STAGE LABEL INTO PEST / WEED / DISEASE
-# Each item now carries its OWN start_day/end_day — an item's
-# actual active period, which can span or overlap stage
-# boundaries. stage_id is used only to look up the stage's
-# display NAME as a label, not to determine the day range.
+# STAGE LABEL — computed by day-range overlap
+# There's no stage_id link anymore: each item sheet only has
+# its own start_day/end_day. To still show a "Stage: X" label,
+# figure out which crop_stage row(s) each item's day range
+# actually overlaps. An item spanning two stages shows both,
+# e.g. "Seedling → Vegetative".
 # ============================================================
 
-stage_name_lookup = crop_timeline[
-    [
-        "stage_id",
-        "stage"
-    ]
-].drop_duplicates()
+def assign_stage_labels(df, crop_timeline):
+
+    if df.empty or "start_day" not in df.columns or "end_day" not in df.columns:
+        df = df.copy()
+        df["stage"] = pd.Series(dtype=str, index=df.index)
+        return df
+
+    df = df.copy()
+
+    sorted_stages = crop_timeline.sort_values("start_day")
+
+    def label_for(row):
+
+        s = row["start_day"]
+        e = row["end_day"]
+
+        if pd.isna(s) or pd.isna(e):
+            return ""
+
+        overlapping = sorted_stages[
+            (sorted_stages["start_day"] < e) & (sorted_stages["end_day"] > s)
+        ]
+
+        if overlapping.empty:
+            return "(outside defined stages)"
+
+        return " → ".join(overlapping["stage"].astype(str).tolist())
+
+    df["stage"] = df.apply(label_for, axis=1)
+
+    return df
 
 
-crop_pests = crop_pests.merge(
-    stage_name_lookup,
-    on="stage_id",
-    how="left"
-)
+crop_pests = assign_stage_labels(crop_pests, crop_timeline)
+crop_weeds = assign_stage_labels(crop_weeds, crop_timeline)
+crop_diseases = assign_stage_labels(crop_diseases, crop_timeline)
+crop_fert = assign_stage_labels(crop_fert, crop_timeline)
 
 
-crop_weeds = crop_weeds.merge(
-    stage_name_lookup,
-    on="stage_id",
-    how="left"
-)
-
-
-crop_diseases = crop_diseases.merge(
-    stage_name_lookup,
-    on="stage_id",
-    how="left"
-)
-
-
-# Each of these sheets is now expected to carry its own
+# Each of these sheets is expected to carry its own
 # start_day/end_day directly (an item's actual active period,
 # independent of the parent stage's boundaries).
 _missing_day_cols = {
