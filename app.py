@@ -1496,7 +1496,7 @@ if dashboard_view == "🎯 Product Coverage" and coverage_debug_rows:
 # PRODUCTS TABLE (only in Reference Timeline view)
 # ============================================================
 
-if dashboard_view == "📅 Reference Timeline":
+if dashboard_view == " Reference Timeline":
 
     st.subheader("🧪 Registered Products")
 
