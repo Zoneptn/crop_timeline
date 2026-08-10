@@ -985,6 +985,50 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
         )
 
     # --------------------------------------------------
+    # LAYOUT (computed BEFORE the labels below — the
+    # labels need fixed PIXEL offsets, not fractions, to
+    # stay a constant distance from the plot regardless of
+    # how many items/rows the chart has. A fixed fraction
+    # like y=1.2 looks fine on a small chart but becomes a
+    # huge, disconnected gap on a tall one, since the same
+    # fraction maps to far more pixels as height grows.)
+    # --------------------------------------------------
+
+    total_items = sum(row_heights)
+
+    chart_height = max(700, total_items * 44 + 320)
+
+    # Fixed margins — enough for a 2-tier staggered stage
+    # label (up to ~3 lines each) plus the legend row when
+    # shown, independent of item count.
+    margin_top = 210 if show_legend else 170
+    margin_bottom = 150
+
+    layout_kwargs = dict(
+        barmode="overlay",
+        bargap=0.15,
+        height=chart_height,
+        margin=dict(l=20, r=20, t=margin_top, b=margin_bottom),
+        hovermode="closest",
+        showlegend=show_legend
+    )
+
+    if show_legend:
+        # Positioned above BOTH label tiers (fixed pixel
+        # offset, same technique as the stage labels below)
+        # so it never collides with them regardless of chart
+        # height.
+        legend_offset_px = 160
+        legend_plot_area_height = max(chart_height - margin_top - margin_bottom, 1)
+        legend_y = 1 + (legend_offset_px / legend_plot_area_height)
+
+        layout_kwargs["legend"] = dict(
+            orientation="h", yanchor="bottom", y=legend_y, xanchor="left", x=0
+        )
+
+    fig.update_layout(**layout_kwargs)
+
+    # --------------------------------------------------
     # STAGE BOUNDARIES (span all active rows)
     # --------------------------------------------------
 
@@ -1009,18 +1053,29 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
         )
 
     # --------------------------------------------------
-    # STAGE LABELS — top AND bottom of the whole figure
+    # STAGE LABELS — top AND bottom, staggered onto 2
+    # tiers so adjacent narrow stages don't collide, and
+    # positioned by fixed pixel offset so the gap stays
+    # constant regardless of chart height.
     # --------------------------------------------------
 
     xref_bottom = f"x{num_rows}" if num_rows > 1 else "x"
 
-    for _, row in crop_timeline.iterrows():
+    plot_area_height = max(chart_height - margin_top - margin_bottom, 1)
+
+    # Tier 0 sits closer to the plot, tier 1 further out —
+    # alternating stages between them so immediate neighbors
+    # never share the same shelf.
+    tier0_px = 25
+    tier1_px = 90
+
+    for i, (_, row) in enumerate(crop_timeline.reset_index(drop=True).iterrows()):
 
         start = row["start_day"]
         end = row["end_day"]
         midpoint = (start + end) / 2
 
-        stage_name = wrap_label(str(row["stage"]))
+        stage_name = wrap_label(str(row["stage"]), max_chars=14)
 
         stage_text = (
             f"<b>{stage_name}</b>"
@@ -1028,47 +1083,29 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
             f"Day {start:,.0f}–{end:,.0f}"
         )
 
+        tier_px = tier0_px if i % 2 == 0 else tier1_px
+
+        offset_fraction = tier_px / plot_area_height
+
         fig.add_annotation(
-            x=midpoint, y=-0.2, xref=xref_bottom, yref="paper",
+            x=midpoint, y=0 - offset_fraction, xref=xref_bottom, yref="paper",
             text=stage_text, showarrow=False, align="center",
-            font=dict(size=13)
+            font=dict(size=12)
         )
 
         fig.add_annotation(
-            x=midpoint, y=1.2, xref="x", yref="paper",
+            x=midpoint, y=1 + offset_fraction, xref="x", yref="paper",
             text=stage_text, showarrow=False, align="center",
-            font=dict(size=13)
+            font=dict(size=12)
         )
 
     # --------------------------------------------------
-    # LAYOUT
+    # X-AXIS — always show the FULL crop lifetime (day 0
+    # to the final stage's end_day), regardless of where
+    # the actual bars happen to start/end — otherwise
+    # Plotly autoscales to just the bar data and can
+    # visually crop the timeline.
     # --------------------------------------------------
-
-    total_items = sum(row_heights)
-
-    chart_height = max(700, total_items * 44 + 320)
-
-    layout_kwargs = dict(
-        barmode="overlay",
-        bargap=0.15,
-        height=chart_height,
-        margin=dict(l=20, r=20, t=270, b=250),
-        hovermode="closest",
-        showlegend=show_legend
-    )
-
-    if show_legend:
-        layout_kwargs["legend"] = dict(
-            orientation="h", yanchor="bottom", y=1.3, xanchor="left", x=0
-        )
-
-    fig.update_layout(**layout_kwargs)
-
-    # Always show the FULL crop lifetime on the x-axis
-    # (day 0 to the final stage's end_day), regardless of
-    # where the actual bars happen to start/end — otherwise
-    # Plotly autoscales to just the bar data and can visually
-    # crop the timeline.
     if not crop_timeline.empty:
         lifetime_end = crop_timeline["end_day"].max()
         pad = max(2, lifetime_end * 0.02)
