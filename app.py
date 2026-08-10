@@ -1010,8 +1010,8 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
     # stack of controlled elements below — independent of item
     # count, so this stays correct whether the chart has 4
     # items or 400.
-    margin_top = 245 if show_legend else 200
-    margin_bottom = 235
+    margin_top = 285 if show_legend else 240
+    margin_bottom = 275
 
     layout_kwargs = dict(
         barmode="overlay",
@@ -1032,7 +1032,7 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
 
     if show_legend:
         # Sits above the tier1 stage label (see stack below).
-        legend_y = px_to_y_above(200)
+        legend_y = px_to_y_above(235)
         layout_kwargs["legend"] = dict(
             orientation="h", yanchor="bottom", y=legend_y, xanchor="left", x=0
         )
@@ -1087,14 +1087,14 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
     xref_bottom = f"x{num_rows}" if num_rows > 1 else "x"
 
     # Top: clear of the row1 title (~15px + ~25px text = 40px)
-    top_tier0_px = 55
-    top_tier1_px = 130
+    top_tier0_px = 90
+    top_tier1_px = 165
 
     # Bottom: clear of native x-axis tick numbers + "Days
     # After Planting" title (Plotly reserves ~55-65px for
     # these within the margin automatically)
-    bottom_tier0_px = 90
-    bottom_tier1_px = 165
+    bottom_tier0_px = 130
+    bottom_tier1_px = 205
 
     for i, (_, row) in enumerate(crop_timeline.reset_index(drop=True).iterrows()):
 
