@@ -263,17 +263,13 @@ def load_data(file_path):
         df.rename(columns=typo_fix_map, inplace=True)
 
     # -----------------------------------------
-    # crop_disease has a duplicated "stage_id"
+    # crop_disease had a duplicated "stage_id"
     # column in the workbook — pandas renames the
-    # second one to "stage_id.1" on read. The sheet
-    # also carries its own start_day/end_day,
-    # which would collide with stage_lookup's
-    # versions when merged later (producing
-    # start_day_x/start_day_y and silently
-    # breaking the chart). Drop all of these here
-    # so diseases gets its start_day/end_day the
-    # same way every other sheet does: from the
-    # stage merge, single source of truth.
+    # second one to "stage_id.1" on read. That's
+    # still genuine junk and gets dropped. Its
+    # start_day/end_day, however, are now
+    # authoritative per-item timing (items can
+    # overlap stage boundaries), so those are kept.
     # -----------------------------------------
 
     dup_stage_cols = [
@@ -281,13 +277,22 @@ def load_data(file_path):
         if col.startswith("stage_id.")
     ]
 
-    drop_cols = [
-        col for col in (["start_day", "end_day"] + dup_stage_cols)
-        if col in diseases.columns
-    ]
+    if dup_stage_cols:
+        diseases = diseases.drop(columns=dup_stage_cols)
 
-    if drop_cols:
-        diseases = diseases.drop(columns=drop_cols)
+    # -----------------------------------------
+    # weeds/pests/diseases/fertilizer each carry
+    # their own start_day/end_day now (an item's
+    # actual active period, which can span or
+    # overlap stage boundaries — stage_id/stage is
+    # just a label). Make sure they're numeric,
+    # the same way timeline's are.
+    # -----------------------------------------
+
+    for df in (pests, weeds, diseases, stage_fert):
+        for col in ("start_day", "end_day"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
 
     datasets = [
         timeline,
@@ -440,7 +445,7 @@ selected_crop = st.sidebar.selectbox(
     crop_list
 )
 
-our_company_raw = "SAC"
+our_company_raw = "SHK"
 
 if dashboard_view == "🎯 Product Coverage":
 
@@ -450,7 +455,7 @@ if dashboard_view == "🎯 Product Coverage":
 
     our_company_raw = st.sidebar.text_input(
         "Your company name",
-        value="SAC",
+        value="SHK",
         help=(
             "Matched against the 'company_name' column, ignoring case, "
             "extra whitespace, and Unicode variations."
@@ -491,22 +496,15 @@ crop_diseases = diseases[
     diseases["crop_id"] == crop_id
 ].copy()
 
-# Fertilizer sheet carries crop_id directly, same as
-# the other 3 sheets, so filter the same way.
+# Fertilizer sheet carries crop_id, its own stage label, AND
+# its own start_day/end_day — fully self-contained, no merge
+# needed.
 if stage_fert.empty or "crop_id" not in stage_fert.columns:
     crop_fert = stage_fert.copy()
 else:
     crop_fert = stage_fert[
         stage_fert["crop_id"] == crop_id
     ].copy()
-
-    # The sheet also carries its own "stage" column,
-    # which would collide with stage_lookup's "stage"
-    # column on merge (producing stage_x/stage_y). Drop
-    # it here — we'll get the authoritative version
-    # (with matching start_day/end_day) from the merge.
-    if "stage" in crop_fert.columns:
-        crop_fert = crop_fert.drop(columns=["stage"])
 
 
 crop_timeline = crop_timeline.sort_values(
@@ -515,46 +513,61 @@ crop_timeline = crop_timeline.sort_values(
 
 
 # ============================================================
-# MERGE TIMELINE DAYS INTO PEST / WEED / DISEASE / FERTILIZER
+# MERGE STAGE LABEL INTO PEST / WEED / DISEASE
+# Each item now carries its OWN start_day/end_day — an item's
+# actual active period, which can span or overlap stage
+# boundaries. stage_id is used only to look up the stage's
+# display NAME as a label, not to determine the day range.
 # ============================================================
 
-stage_lookup = crop_timeline[
+stage_name_lookup = crop_timeline[
     [
         "stage_id",
-        "stage",
-        "start_day",
-        "end_day"
+        "stage"
     ]
 ].drop_duplicates()
 
 
 crop_pests = crop_pests.merge(
-    stage_lookup,
+    stage_name_lookup,
     on="stage_id",
     how="left"
 )
 
 
 crop_weeds = crop_weeds.merge(
-    stage_lookup,
+    stage_name_lookup,
     on="stage_id",
     how="left"
 )
 
 
 crop_diseases = crop_diseases.merge(
-    stage_lookup,
+    stage_name_lookup,
     on="stage_id",
     how="left"
 )
 
 
-if not crop_fert.empty and "stage_id" in crop_fert.columns:
-    crop_fert = crop_fert.merge(
-        stage_lookup,
-        on="stage_id",
-        how="left"
+# Each of these sheets is now expected to carry its own
+# start_day/end_day directly (an item's actual active period,
+# independent of the parent stage's boundaries).
+_missing_day_cols = {
+    "crop_pest": [c for c in ("start_day", "end_day") if c not in crop_pests.columns],
+    "crop_weeds": [c for c in ("start_day", "end_day") if c not in crop_weeds.columns],
+    "crop_disease": [c for c in ("start_day", "end_day") if c not in crop_diseases.columns],
+    "fertilizer": [c for c in ("start_day", "end_day") if c not in crop_fert.columns] if not crop_fert.empty else []
+}
+
+_missing_day_cols = {k: v for k, v in _missing_day_cols.items() if v}
+
+if _missing_day_cols:
+    st.error(
+        "These sheets are missing their own start_day/end_day columns "
+        "(each item is expected to carry its own active period now):\n\n"
+        + "\n".join(f"- {sheet}: missing {cols}" for sheet, cols in _missing_day_cols.items())
     )
+    st.stop()
 
 
 # ============================================================
