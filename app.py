@@ -425,7 +425,7 @@ if st.sidebar.button("🔄 Reload data"):
 
 dashboard_view = st.sidebar.radio(
     "View",
-    ["📅 Reference Timeline", "🎯 Product Coverage"],
+    ["🗓️ Reference Timeline", "🎯 Product Coverage"],
     index=0
 )
 
@@ -1451,7 +1451,7 @@ if not any_data:
 else:
     st.plotly_chart(fig, width='stretch')
 
-if dashboard_view == "📅 Reference Timeline":
+if dashboard_view == "🗓️ Reference Timeline":
     st.caption(
         "Hover over a bar to view the Thai name, growth stage, "
         "active period, and registered products."
