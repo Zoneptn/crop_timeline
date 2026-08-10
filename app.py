@@ -866,6 +866,33 @@ NOT_COVERED_COLOR = "#d62728"  # red
 # layout are all defined exactly once.
 # ============================================================
 
+def wrap_label(text, max_chars=16):
+    """Break a long label onto 2 lines at the nearest word boundary
+    to max_chars, so it takes less horizontal room and doesn't
+    collide with neighboring labels. Short labels pass through
+    unchanged."""
+
+    if len(text) <= max_chars:
+        return text
+
+    words = text.split(" ")
+
+    line1 = ""
+
+    for word in words:
+        candidate = (line1 + " " + word).strip()
+        if len(candidate) > max_chars and line1:
+            break
+        line1 = candidate
+
+    line2 = text[len(line1):].strip()
+
+    if not line2:
+        return text
+
+    return f"{line1}<br>{line2}"
+
+
 def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
 
     for group in active_groups:
@@ -952,6 +979,7 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
             autorange="reversed",
             automargin=True,
             title="",
+            tickfont=dict(size=13),
             row=row_idx,
             col=1
         )
@@ -992,8 +1020,10 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
         end = row["end_day"]
         midpoint = (start + end) / 2
 
+        stage_name = wrap_label(str(row["stage"]))
+
         stage_text = (
-            f"<b>{row['stage']}</b>"
+            f"<b>{stage_name}</b>"
             f"<br>"
             f"Day {start:,.0f}–{end:,.0f}"
         )
@@ -1001,13 +1031,13 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
         fig.add_annotation(
             x=midpoint, y=-0.2, xref=xref_bottom, yref="paper",
             text=stage_text, showarrow=False, align="center",
-            font=dict(size=11)
+            font=dict(size=13)
         )
 
         fig.add_annotation(
             x=midpoint, y=1.2, xref="x", yref="paper",
             text=stage_text, showarrow=False, align="center",
-            font=dict(size=11)
+            font=dict(size=13)
         )
 
     # --------------------------------------------------
@@ -1016,10 +1046,11 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
 
     total_items = sum(row_heights)
 
-    chart_height = max(700, total_items * 38 + 320)
+    chart_height = max(700, total_items * 44 + 320)
 
     layout_kwargs = dict(
         barmode="overlay",
+        bargap=0.15,
         height=chart_height,
         margin=dict(l=20, r=20, t=270, b=250),
         hovermode="closest",
@@ -1079,10 +1110,13 @@ selected_categories = st.multiselect(
 def build_reference_groups():
 
     def weed_info(row, name):
+        english_name = row.get("weed_name_en", "")
         thai_name = row.get("weed_name_th", "")
         product_text = format_products(weed_product_map, row.get("weed_id"), "Weed")
         hover = (
-            f"<b>{name}</b><br>{thai_name}<br><br>"
+            f"<b><i>{name}</i></b><br>"
+            f"EN: {english_name}<br>"
+            f"TH: {thai_name}<br><br>"
             f"Stage: {row['stage']}<br>"
             f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
             f"<b>Products:</b><br>{product_text}"
@@ -1124,7 +1158,7 @@ def build_reference_groups():
     return [
         {
             "label": "Weed", "icon": "🌱", "option_label": "🌱 Weeds", "data": crop_weeds,
-            "name_col": "weed_name_en", "thai_col": "weed_name_th",
+            "name_col": "weed_science", "thai_col": "weed_name_th",
             "id_col": "weed_id", "mode": "product_lookup",
             "get_trace_info": weed_info
         },
@@ -1157,7 +1191,7 @@ def build_coverage_groups(our_company_lower):
 
     coverage_debug_rows = []
 
-    def make_threat_info(product_map, thai_col, id_col, category_label):
+    def make_threat_info(product_map, thai_col, id_col, category_label, extra_col=None, extra_label=None):
 
         def info(row, name):
 
@@ -1169,6 +1203,11 @@ def build_coverage_groups(our_company_lower):
 
             thai_name = row.get(thai_col, "") if thai_col else ""
 
+            extra_line = (
+                f"{extra_label}: {row.get(extra_col, '')}<br>"
+                if extra_col else ""
+            )
+
             color = COVERED_COLOR if is_covered else NOT_COVERED_COLOR
 
             if is_covered:
@@ -1179,8 +1218,10 @@ def build_coverage_groups(our_company_lower):
             else:
                 status = "❌ No registered product at all"
 
+            name_display = f"<i>{name}</i>" if extra_col else name
+
             hover = (
-                f"<b>{name}</b><br>{thai_name}<br><br>"
+                f"<b>{name_display}</b><br>{extra_line}{thai_name}<br><br>"
                 f"Stage: {row['stage']}<br>"
                 f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
                 f"{status}"
@@ -1226,9 +1267,10 @@ def build_coverage_groups(our_company_lower):
     groups = [
         {
             "label": "Weed", "icon": "🌱", "option_label": "🌱 Weeds", "data": crop_weeds,
-            "name_col": "weed_name_en",
+            "name_col": "weed_science",
             "get_trace_info": make_threat_info(
-                weed_product_map, "weed_name_th", "weed_id", "Weed"
+                weed_product_map, "weed_name_th", "weed_id", "Weed",
+                extra_col="weed_name_en", extra_label="EN"
             )
         },
         {
@@ -1461,9 +1503,28 @@ if dashboard_view == "📅 Reference Timeline":
             st.info(f"No product data available for {category_name.lower()}s.")
         else:
 
-            item_lookup = chart_data[[id_column, name_column, thai_column]].drop_duplicates()
+            item_lookup_cols = [id_column, name_column, thai_column]
 
-            product_table = item_lookup.merge(product_df, on=id_column, how="inner")
+            # Weed's name_col is now the scientific name — also
+            # pull in the English common name as its own column.
+            if category_name == "Weed" and "weed_name_en" in chart_data.columns:
+                item_lookup_cols.append("weed_name_en")
+
+            item_lookup = chart_data[item_lookup_cols].drop_duplicates()
+
+            # The product sheets (weed_her/pest_ins/disease_fun) also
+            # carry their own redundant thai-name column, which would
+            # collide with item_lookup's version on merge (silently
+            # producing thai_column_x/thai_column_y and dropping both
+            # from display). Drop the product sheet's copy — we
+            # already have the authoritative one from item_lookup.
+            product_df_for_merge = (
+                product_df.drop(columns=[thai_column])
+                if thai_column in product_df.columns
+                else product_df
+            )
+
+            product_table = item_lookup.merge(product_df_for_merge, on=id_column, how="inner")
 
             if product_table.empty:
                 st.info(
@@ -1476,9 +1537,15 @@ if dashboard_view == "📅 Reference Timeline":
                     category_name, (None, None)
                 )
 
+                name_col_label = (
+                    f"{category_name} (Scientific)" if category_name == "Weed"
+                    else f"{category_name} (EN)"
+                )
+
                 rename_map = {
-                    name_column: f"{category_name} (EN)",
+                    name_column: name_col_label,
                     thai_column: f"{category_name} (TH)",
+                    "weed_name_en": "Weed (EN)",
                     "brand_name": "Brand",
                     "company_name": "Company",
                     "common_name": "Common Name",
@@ -1486,8 +1553,13 @@ if dashboard_view == "📅 Reference Timeline":
                     "formulation_type": "Formulation"
                 }
 
-                table_cols = [name_column, thai_column, "brand_name", "company_name",
-                              "common_name", "concentration", "formulation_type"]
+                table_cols = [name_column]
+
+                if category_name == "Weed":
+                    table_cols.append("weed_name_en")
+
+                table_cols += [thai_column, "brand_name", "company_name",
+                               "common_name", "concentration", "formulation_type"]
 
                 if resistance_col:
                     rename_map[resistance_col] = resistance_label
