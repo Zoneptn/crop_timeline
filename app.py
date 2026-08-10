@@ -907,9 +907,17 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
 
     row_heights = [max(g["item_count"], 1) for g in active_groups]
 
-    subplot_titles = [
+    row1_title = f"{active_groups[0]['icon']} {active_groups[0]['label']}s ({active_groups[0]['item_count']})"
+
+    # Row 1's title is suppressed here and added back manually
+    # further down, at a precisely controlled offset — Plotly's
+    # own automatic placement for it lives in the same vertical
+    # zone as our custom top stage-boundary labels and collides
+    # with them. Rows 2+ keep their auto title since those sit
+    # in the inter-row spacing gap and don't have this problem.
+    subplot_titles = [""] + [
         f"{g['icon']} {g['label']}s ({g['item_count']})"
-        for g in active_groups
+        for g in active_groups[1:]
     ]
 
     num_rows = len(active_groups)
@@ -998,11 +1006,12 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
 
     chart_height = max(700, total_items * 44 + 320)
 
-    # Fixed margins — enough for a 2-tier staggered stage
-    # label (up to ~3 lines each) plus the legend row when
-    # shown, independent of item count.
-    margin_top = 210 if show_legend else 170
-    margin_bottom = 150
+    # Fixed margins, generous enough to fit the full vertical
+    # stack of controlled elements below — independent of item
+    # count, so this stays correct whether the chart has 4
+    # items or 400.
+    margin_top = 245 if show_legend else 200
+    margin_bottom = 235
 
     layout_kwargs = dict(
         barmode="overlay",
@@ -1013,15 +1022,17 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
         showlegend=show_legend
     )
 
-    if show_legend:
-        # Positioned above BOTH label tiers (fixed pixel
-        # offset, same technique as the stage labels below)
-        # so it never collides with them regardless of chart
-        # height.
-        legend_offset_px = 160
-        legend_plot_area_height = max(chart_height - margin_top - margin_bottom, 1)
-        legend_y = 1 + (legend_offset_px / legend_plot_area_height)
+    plot_area_height = max(chart_height - margin_top - margin_bottom, 1)
 
+    def px_to_y_above(px):
+        return 1 + (px / plot_area_height)
+
+    def px_to_y_below(px):
+        return 0 - (px / plot_area_height)
+
+    if show_legend:
+        # Sits above the tier1 stage label (see stack below).
+        legend_y = px_to_y_above(200)
         layout_kwargs["legend"] = dict(
             orientation="h", yanchor="bottom", y=legend_y, xanchor="left", x=0
         )
@@ -1053,21 +1064,37 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
         )
 
     # --------------------------------------------------
+    # ROW 1 TITLE — manually placed (see note above), a
+    # small fixed offset above the plot, well clear of the
+    # stage label tiers added next.
+    # --------------------------------------------------
+
+    fig.add_annotation(
+        x=0.5, y=px_to_y_above(15), xref="x domain", yref="paper",
+        text=f"<b>{row1_title}</b>", showarrow=False, align="center",
+        font=dict(size=14)
+    )
+
+    # --------------------------------------------------
     # STAGE LABELS — top AND bottom, staggered onto 2
-    # tiers so adjacent narrow stages don't collide, and
-    # positioned by fixed pixel offset so the gap stays
-    # constant regardless of chart height.
+    # tiers so adjacent narrow stages don't collide. Each
+    # tier sits a fixed pixel distance out, explicitly
+    # clear of: the row1 title (top) and the x-axis tick
+    # numbers + axis title (bottom) — both of which live in
+    # the same general zone and would otherwise collide.
     # --------------------------------------------------
 
     xref_bottom = f"x{num_rows}" if num_rows > 1 else "x"
 
-    plot_area_height = max(chart_height - margin_top - margin_bottom, 1)
+    # Top: clear of the row1 title (~15px + ~25px text = 40px)
+    top_tier0_px = 55
+    top_tier1_px = 130
 
-    # Tier 0 sits closer to the plot, tier 1 further out —
-    # alternating stages between them so immediate neighbors
-    # never share the same shelf.
-    tier0_px = 25
-    tier1_px = 90
+    # Bottom: clear of native x-axis tick numbers + "Days
+    # After Planting" title (Plotly reserves ~55-65px for
+    # these within the margin automatically)
+    bottom_tier0_px = 90
+    bottom_tier1_px = 165
 
     for i, (_, row) in enumerate(crop_timeline.reset_index(drop=True).iterrows()):
 
@@ -1083,18 +1110,19 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
             f"Day {start:,.0f}–{end:,.0f}"
         )
 
-        tier_px = tier0_px if i % 2 == 0 else tier1_px
+        is_tier0 = (i % 2 == 0)
 
-        offset_fraction = tier_px / plot_area_height
+        top_px = top_tier0_px if is_tier0 else top_tier1_px
+        bottom_px = bottom_tier0_px if is_tier0 else bottom_tier1_px
 
         fig.add_annotation(
-            x=midpoint, y=0 - offset_fraction, xref=xref_bottom, yref="paper",
+            x=midpoint, y=px_to_y_below(bottom_px), xref=xref_bottom, yref="paper",
             text=stage_text, showarrow=False, align="center",
             font=dict(size=12)
         )
 
         fig.add_annotation(
-            x=midpoint, y=1 + offset_fraction, xref="x", yref="paper",
+            x=midpoint, y=px_to_y_above(top_px), xref="x", yref="paper",
             text=stage_text, showarrow=False, align="center",
             font=dict(size=12)
         )
