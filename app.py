@@ -696,13 +696,24 @@ def normalize_text(value):
 # PRODUCT LOOKUPS (shared by both views)
 # ============================================================
 
-PRODUCT_COLUMNS = [
+# Company name is intentionally excluded from anything shown
+# on the bars/hover — it's shown only in the Coverage debug
+# table. On the bars, the resistance-group code (which differs
+# by category) is shown instead.
+PRODUCT_DISPLAY_COLUMNS = [
     "brand_name",
-    "company_name",
     "common_name",
     "concentration",
     "formulation_type"
 ]
+
+# Which resistance-code column applies to each category, and
+# its display label.
+RESISTANCE_CODE_INFO = {
+    "Weed": ("hrac_code", "HRAC"),
+    "Insect": ("irac_code", "IRAC"),
+    "Disease": ("frac_code", "FRAC")
+}
 
 
 def build_product_map(product_df, id_column):
@@ -718,12 +729,16 @@ def build_product_map(product_df, id_column):
     )
 
 
-def format_products(product_map, product_id):
+def format_products(product_map, product_id, category_label=None):
 
     products = product_map.get(product_id, [])
 
     if not products:
         return "No registered products"
+
+    resistance_col, resistance_label = RESISTANCE_CODE_INFO.get(
+        category_label, (None, None)
+    )
 
     lines = []
 
@@ -731,22 +746,30 @@ def format_products(product_map, product_id):
 
         parts = [
             str(p.get(col, "")).strip()
-            for col in PRODUCT_COLUMNS
+            for col in PRODUCT_DISPLAY_COLUMNS
             if str(p.get(col, "")).strip()
             and str(p.get(col, "")).strip().lower() != "nan"
         ]
 
-        lines.append("• " + " | ".join(parts))
+        if resistance_col:
+            code = str(p.get(resistance_col, "")).strip()
+            if code and code.lower() != "nan":
+                parts.append(f"{resistance_label}: {code}")
+
+        lines.append("• " + " | ".join(parts) if parts else "• (unnamed product)")
 
     return "<br>".join(lines)
 
 
 def compute_coverage(product_map, item_id, our_company_lower):
-    """Returns (is_covered, list_of_normalized_company_names, our_products).
+    """Returns (is_covered, list_of_normalized_company_names,
+    our_products, other_products).
 
-    our_products is the list of raw product records (brand_name,
-    common_name, etc.) whose company matches ours — used to show
-    exactly which product(s) we have, not just that we have one.
+    our_products / other_products are raw product records
+    (brand_name, common_name, resistance code, etc.) split by
+    whether they're ours — used to show exactly which product(s)
+    we have, and what resistance group competitor products fall
+    into, without naming the competitor.
     """
 
     products = product_map.get(item_id, [])
@@ -762,14 +785,21 @@ def compute_coverage(product_map, item_id, our_company_lower):
         if our_company_lower in normalize_text(p.get("company_name", "")).lower()
     ]
 
+    other_products = [p for p in products if p not in our_products]
+
     is_covered = len(our_products) > 0
 
-    return is_covered, companies, our_products
+    return is_covered, companies, our_products, other_products
 
 
-def format_our_products(our_products):
-    """Bullet list of brand + common name for each of our products.
-    Single product still gets a bullet, for visual consistency."""
+def format_our_products(our_products, category_label=None):
+    """Bullet list of brand + common name (+ resistance code) for
+    each of our products. Single product still gets a bullet, for
+    visual consistency. Company name deliberately excluded."""
+
+    resistance_col, resistance_label = RESISTANCE_CODE_INFO.get(
+        category_label, (None, None)
+    )
 
     lines = []
 
@@ -783,9 +813,39 @@ def format_our_products(our_products):
             if v and v.lower() != "nan"
         ]
 
+        if resistance_col:
+            code = str(p.get(resistance_col, "")).strip()
+            if code and code.lower() != "nan":
+                parts.append(f"{resistance_label}: {code}")
+
         lines.append("• " + " — ".join(parts) if parts else "• (unnamed product)")
 
     return "<br>".join(lines) if lines else "• (product details unavailable)"
+
+
+def format_other_products(companies_products, category_label=None):
+    """For items we DON'T cover: show what resistance groups the
+    existing (competitor) products fall into, without naming which
+    company — just enough to be technically useful."""
+
+    resistance_col, resistance_label = RESISTANCE_CODE_INFO.get(
+        category_label, (None, None)
+    )
+
+    if not resistance_col:
+        return f"{len(companies_products)} other registered product(s)"
+
+    codes = sorted({
+        str(p.get(resistance_col, "")).strip()
+        for p in companies_products
+        if str(p.get(resistance_col, "")).strip()
+        and str(p.get(resistance_col, "")).strip().lower() != "nan"
+    })
+
+    if not codes:
+        return "Other registered product(s) — resistance group not recorded"
+
+    return f"Other registered product(s), {resistance_label} group(s): " + ", ".join(codes)
 
 
 weed_product_map = build_product_map(weed_her, "weed_id")
@@ -1020,7 +1080,7 @@ def build_reference_groups():
 
     def weed_info(row, name):
         thai_name = row.get("weed_name_th", "")
-        product_text = format_products(weed_product_map, row.get("weed_id"))
+        product_text = format_products(weed_product_map, row.get("weed_id"), "Weed")
         hover = (
             f"<b>{name}</b><br>{thai_name}<br><br>"
             f"Stage: {row['stage']}<br>"
@@ -1031,7 +1091,7 @@ def build_reference_groups():
 
     def pest_info(row, name):
         thai_name = row.get("pest_name_th", "")
-        product_text = format_products(pest_product_map, row.get("pest_id"))
+        product_text = format_products(pest_product_map, row.get("pest_id"), "Insect")
         hover = (
             f"<b>{name}</b><br>{thai_name}<br><br>"
             f"Stage: {row['stage']}<br>"
@@ -1042,7 +1102,7 @@ def build_reference_groups():
 
     def disease_info(row, name):
         thai_name = row.get("disease_name_th", "")
-        product_text = format_products(disease_product_map, row.get("disease_id"))
+        product_text = format_products(disease_product_map, row.get("disease_id"), "Disease")
         hover = (
             f"<b>{name}</b><br>{thai_name}<br><br>"
             f"Stage: {row['stage']}<br>"
@@ -1103,7 +1163,7 @@ def build_coverage_groups(our_company_lower):
 
             item_id = row.get(id_col)
 
-            is_covered, companies, our_products = compute_coverage(
+            is_covered, companies, our_products, other_products = compute_coverage(
                 product_map, item_id, our_company_lower
             )
 
@@ -1112,10 +1172,10 @@ def build_coverage_groups(our_company_lower):
             color = COVERED_COLOR if is_covered else NOT_COVERED_COLOR
 
             if is_covered:
-                product_list = format_our_products(our_products)
+                product_list = format_our_products(our_products, category_label)
                 status = f"✅ We have a product:<br>{product_list}"
-            elif companies:
-                status = "❌ No product from us — only: " + ", ".join(companies)
+            elif other_products:
+                status = "❌ " + format_other_products(other_products, category_label)
             else:
                 status = "❌ No registered product at all"
 
@@ -1412,6 +1472,10 @@ if dashboard_view == "📅 Reference Timeline":
                 )
             else:
 
+                resistance_col, resistance_label = RESISTANCE_CODE_INFO.get(
+                    category_name, (None, None)
+                )
+
                 rename_map = {
                     name_column: f"{category_name} (EN)",
                     thai_column: f"{category_name} (TH)",
@@ -1422,8 +1486,15 @@ if dashboard_view == "📅 Reference Timeline":
                     "formulation_type": "Formulation"
                 }
 
+                table_cols = [name_column, thai_column, "brand_name", "company_name",
+                              "common_name", "concentration", "formulation_type"]
+
+                if resistance_col:
+                    rename_map[resistance_col] = resistance_label
+                    table_cols.append(resistance_col)
+
                 display_cols = [
-                    col for col in [name_column, thai_column] + PRODUCT_COLUMNS
+                    col for col in table_cols
                     if col in product_table.columns
                 ]
 
