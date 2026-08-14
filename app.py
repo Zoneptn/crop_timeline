@@ -425,7 +425,7 @@ if st.sidebar.button("🔄 Reload data"):
 
 dashboard_view = st.sidebar.radio(
     "View",
-    ["🗓️ Reference Timeline", "🎯 Product Coverage"],
+    ["📅 Reference Timeline", "🎯 Product Coverage"],
     index=0
 )
 
@@ -1182,7 +1182,6 @@ def build_reference_groups():
             f"<b><i>{name}</i></b><br>"
             f"EN: {english_name}<br>"
             f"TH: {thai_name}<br><br>"
-            f"Stage: {row['stage']}<br>"
             f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
             f"<b>Products:</b><br>{product_text}"
         )
@@ -1193,7 +1192,6 @@ def build_reference_groups():
         product_text = format_products(pest_product_map, row.get("pest_id"), "Insect")
         hover = (
             f"<b>{name}</b><br>{thai_name}<br><br>"
-            f"Stage: {row['stage']}<br>"
             f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
             f"<b>Products:</b><br>{product_text}"
         )
@@ -1204,7 +1202,6 @@ def build_reference_groups():
         product_text = format_products(disease_product_map, row.get("disease_id"), "Disease")
         hover = (
             f"<b>{name}</b><br>{thai_name}<br><br>"
-            f"Stage: {row['stage']}<br>"
             f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
             f"<b>Products:</b><br>{product_text}"
         )
@@ -1215,7 +1212,6 @@ def build_reference_groups():
             f"<b>🧪 {name}</b><br>"
             f"Brand: {row.get('fertilizer_brand', '—')}<br>"
             f"Company: {row.get('fertilizer_company', '—')}<br><br>"
-            f"Stage: {row['stage']}<br>"
             f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}"
         )
         return "#1f77b4", hover, "fert_ref", "Fertilizer"
@@ -1287,7 +1283,6 @@ def build_coverage_groups(our_company_lower):
 
             hover = (
                 f"<b>{name_display}</b><br>{extra_line}{thai_name}<br><br>"
-                f"Stage: {row['stage']}<br>"
                 f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
                 f"{status}"
             )
@@ -1324,7 +1319,6 @@ def build_coverage_groups(our_company_lower):
             f"<b>🧪 {name}</b><br>"
             f"Brand: {row.get('fertilizer_brand', '—')}<br>"
             f"Company: {row.get('fertilizer_company', '—')}<br><br>"
-            f"Stage: {row['stage']}<br>"
             f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}"
         )
         return COVERED_COLOR, hover, "fertilizer", "Our fertilizer recommendation"
@@ -1451,7 +1445,7 @@ if not any_data:
 else:
     st.plotly_chart(fig, width='stretch')
 
-if dashboard_view == "🗓️ Reference Timeline":
+if dashboard_view == "📅 Reference Timeline":
     st.caption(
         "Hover over a bar to view the Thai name, growth stage, "
         "active period, and registered products."
@@ -1496,7 +1490,7 @@ if dashboard_view == "🎯 Product Coverage" and coverage_debug_rows:
 # PRODUCTS TABLE (only in Reference Timeline view)
 # ============================================================
 
-if dashboard_view == " Reference Timeline":
+if dashboard_view == "📅 Reference Timeline":
 
     st.subheader("🧪 Registered Products")
 
