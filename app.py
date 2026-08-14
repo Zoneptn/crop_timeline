@@ -721,12 +721,41 @@ def build_product_map(product_df, id_column):
     if product_df.empty or id_column not in product_df.columns:
         return {}
 
-    return (
-        product_df
-        .groupby(id_column)
-        .apply(lambda d: d.to_dict("records"))
-        .to_dict()
+    # Product-identifying fields — deliberately excludes crop_id
+    # and the row's own id (her_id/ins_id/fun_id). If the same
+    # pest/weed/disease is entered once per crop variety (e.g.
+    # rice 100-day vs rice 120-day both list "Rice thrips"), the
+    # same product ends up duplicated across those rows even
+    # though it's the same product. Dedupe on what actually
+    # identifies a product, not which crop row it came from.
+    DEDUPE_FIELDS = (
+        "brand_name", "company_name", "common_name",
+        "concentration", "formulation_type"
     )
+
+    product_map = {}
+
+    for item_id, group in product_df.groupby(id_column):
+
+        seen = set()
+        deduped = []
+
+        for record in group.to_dict("records"):
+
+            key = tuple(
+                str(record.get(field, "")).strip().lower()
+                for field in DEDUPE_FIELDS
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            deduped.append(record)
+
+        product_map[item_id] = deduped
+
+    return product_map
 
 
 def format_products(product_map, product_id, category_label=None):
