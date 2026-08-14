@@ -82,7 +82,8 @@ def load_data(file_path):
         "weed_her": ["weed_her"],
         "pest_ins": ["pest_ins"],
         "disease_fun": ["disease_fun"],
-        "stage_fert": ["stage_fert", "crop_fert", "fert_stage", "fertilizer"]
+        "stage_fert": ["stage_fert", "crop_fert", "fert_stage", "fertilizer"],
+        "crop_ref": ["crop_ref", "crop_reference"]
     }
 
     assigned = {}
@@ -108,6 +109,7 @@ def load_data(file_path):
     pest_ins = assigned.get("pest_ins")
     disease_fun = assigned.get("disease_fun")
     stage_fert = assigned.get("stage_fert")
+    crop_ref = assigned.get("crop_ref")
 
     # -----------------------------------------
     # Fallback: for any role NOT matched by name
@@ -206,6 +208,7 @@ def load_data(file_path):
     pest_ins = pest_ins if pest_ins is not None else pd.DataFrame()
     disease_fun = disease_fun if disease_fun is not None else pd.DataFrame()
     stage_fert = stage_fert if stage_fert is not None else pd.DataFrame()
+    crop_ref = crop_ref if crop_ref is not None else pd.DataFrame()
 
     # -----------------------------------------
     # Guard against Excel silently converting a
@@ -302,7 +305,8 @@ def load_data(file_path):
         weed_her,
         pest_ins,
         disease_fun,
-        stage_fert
+        stage_fert,
+        crop_ref
     ]
 
     # Normalize id columns used for joins
@@ -343,6 +347,12 @@ def load_data(file_path):
         errors="coerce"
     )
 
+    # day_more_than_120 should be a clean 0/1 int, not text/float
+    if "day_more_than_120" in crop_ref.columns:
+        crop_ref["day_more_than_120"] = pd.to_numeric(
+            crop_ref["day_more_than_120"], errors="coerce"
+        ).fillna(0).astype(int)
+
     return (
         timeline,
         pests,
@@ -352,6 +362,7 @@ def load_data(file_path):
         pest_ins,
         disease_fun,
         stage_fert,
+        crop_ref,
         detected_sheets
     )
 
@@ -365,6 +376,7 @@ def load_data(file_path):
     pest_ins,
     disease_fun,
     stage_fert,
+    crop_ref,
     detected_sheets
 ) = load_data(FILE_PATH)
 
@@ -474,6 +486,42 @@ crop_id = (
     ]
     .iloc[0]
 )
+
+
+# ============================================================
+# LONG-DURATION CROP CHECK
+# For crops flagged in crop_ref (day_more_than_120 == 1), day
+# ranges are also shown in months/years alongside days — a
+# plain day count is hard to read for something like a durian
+# tree spanning 1,460 days. Defaults to off if crop_ref is
+# missing or doesn't have this crop.
+# ============================================================
+
+show_month = False
+
+if not crop_ref.empty and "crop_id" in crop_ref.columns and "day_more_than_120" in crop_ref.columns:
+
+    match = crop_ref.loc[crop_ref["crop_id"] == crop_id, "day_more_than_120"]
+
+    if not match.empty:
+        show_month = bool(match.iloc[0] == 1)
+
+
+def format_day_range(start, end, show_month):
+    """Day range, with an adaptive month/year readout added for
+    long-duration crops — months under a year, years beyond
+    that (since "Month 48" is much harder to picture than
+    "Year 4")."""
+
+    range_text = f"Day {start:,.0f}–{end:,.0f}"
+
+    if not show_month:
+        return range_text
+
+    if end >= 365:
+        return f"{range_text} (~Year {start/365:.1f}–{end/365:.1f})"
+
+    return f"{range_text} (~Month {start/30:.1f}–{end/30:.1f})"
 
 
 # ============================================================
@@ -922,7 +970,7 @@ def wrap_label(text, max_chars=16):
     return f"{line1}<br>{line2}"
 
 
-def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
+def build_gantt_figure(active_groups, crop_timeline, show_legend=False, show_month=False):
 
     for group in active_groups:
 
@@ -1133,10 +1181,12 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
 
         stage_name = wrap_label(str(row["stage"]), max_chars=14)
 
+        day_range = format_day_range(start, end, show_month)
+
         stage_text = (
             f"<b>{stage_name}</b>"
             f"<br>"
-            f"Day {start:,.0f}–{end:,.0f}"
+            f"{day_range}"
         )
 
         is_tier0 = (i % 2 == 0)
@@ -1170,8 +1220,17 @@ def build_gantt_figure(active_groups, crop_timeline, show_legend=False):
     else:
         x_range = None
 
+    if show_month and not crop_timeline.empty:
+        total_days = crop_timeline["end_day"].max()
+        if total_days >= 365:
+            axis_title = f"Days After Planting (~{total_days/365:.1f} years total)"
+        else:
+            axis_title = f"Days After Planting (~{total_days/30:.0f} months total)"
+    else:
+        axis_title = "Days After Planting"
+
     fig.update_xaxes(
-        title="Days After Planting", side="bottom", showgrid=True,
+        title=axis_title, side="bottom", showgrid=True,
         zeroline=False, range=x_range, row=num_rows, col=1
     )
 
@@ -1201,17 +1260,18 @@ selected_categories = st.multiselect(
 # REFERENCE TIMELINE — groups
 # ============================================================
 
-def build_reference_groups():
+def build_reference_groups(show_month=False):
 
     def weed_info(row, name):
         english_name = row.get("weed_name_en", "")
         thai_name = row.get("weed_name_th", "")
         product_text = format_products(weed_product_map, row.get("weed_id"), "Weed")
+        day_range = format_day_range(row["start_day"], row["end_day"], show_month)
         hover = (
             f"<b><i>{name}</i></b><br>"
             f"EN: {english_name}<br>"
             f"TH: {thai_name}<br><br>"
-            f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
+            f"{day_range}<br><br>"
             f"<b>Products:</b><br>{product_text}"
         )
         return "#2ca02c", hover, "weed_ref", "Weeds"
@@ -1219,9 +1279,10 @@ def build_reference_groups():
     def pest_info(row, name):
         thai_name = row.get("pest_name_th", "")
         product_text = format_products(pest_product_map, row.get("pest_id"), "Insect")
+        day_range = format_day_range(row["start_day"], row["end_day"], show_month)
         hover = (
             f"<b>{name}</b><br>{thai_name}<br><br>"
-            f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
+            f"{day_range}<br><br>"
             f"<b>Products:</b><br>{product_text}"
         )
         return "#d62728", hover, "insect_ref", "Insects"
@@ -1229,19 +1290,21 @@ def build_reference_groups():
     def disease_info(row, name):
         thai_name = row.get("disease_name_th", "")
         product_text = format_products(disease_product_map, row.get("disease_id"), "Disease")
+        day_range = format_day_range(row["start_day"], row["end_day"], show_month)
         hover = (
             f"<b>{name}</b><br>{thai_name}<br><br>"
-            f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
+            f"{day_range}<br><br>"
             f"<b>Products:</b><br>{product_text}"
         )
         return "#9467bd", hover, "disease_ref", "Diseases"
 
     def fert_info(row, name):
+        day_range = format_day_range(row["start_day"], row["end_day"], show_month)
         hover = (
             f"<b>🧪 {name}</b><br>"
             f"Brand: {row.get('fertilizer_brand', '—')}<br>"
             f"Company: {row.get('fertilizer_company', '—')}<br><br>"
-            f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}"
+            f"{day_range}"
         )
         return "#1f77b4", hover, "fert_ref", "Fertilizer"
 
@@ -1277,7 +1340,7 @@ def build_reference_groups():
 # PRODUCT COVERAGE — groups
 # ============================================================
 
-def build_coverage_groups(our_company_lower):
+def build_coverage_groups(our_company_lower, show_month=False):
 
     coverage_debug_rows = []
 
@@ -1310,9 +1373,11 @@ def build_coverage_groups(our_company_lower):
 
             name_display = f"<i>{name}</i>" if extra_col else name
 
+            day_range = format_day_range(row["start_day"], row["end_day"], show_month)
+
             hover = (
                 f"<b>{name_display}</b><br>{extra_line}{thai_name}<br><br>"
-                f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}<br><br>"
+                f"{day_range}<br><br>"
                 f"{status}"
             )
 
@@ -1344,11 +1409,12 @@ def build_coverage_groups(our_company_lower):
         return info
 
     def fert_info(row, name):
+        day_range = format_day_range(row["start_day"], row["end_day"], show_month)
         hover = (
             f"<b>🧪 {name}</b><br>"
             f"Brand: {row.get('fertilizer_brand', '—')}<br>"
             f"Company: {row.get('fertilizer_company', '—')}<br><br>"
-            f"Day {row['start_day']:,.0f} – {row['end_day']:,.0f}"
+            f"{day_range}"
         )
         return COVERED_COLOR, hover, "fertilizer", "Our fertilizer recommendation"
 
@@ -1417,7 +1483,7 @@ if dashboard_view == "📅 Reference Timeline":
         "stages — each row is one item, grouped by category."
     )
 
-    all_groups = build_reference_groups()
+    all_groups = build_reference_groups(show_month)
 
     show_legend = False
 
@@ -1453,7 +1519,7 @@ else:
 
     st.divider()
 
-    all_groups, coverage_debug_rows = build_coverage_groups(our_company_lower)
+    all_groups, coverage_debug_rows = build_coverage_groups(our_company_lower, show_month)
 
     show_legend = True
 
@@ -1467,7 +1533,7 @@ if not active_groups:
     st.info("Select at least one category above to see the chart.")
     st.stop()
 
-fig, any_data = build_gantt_figure(active_groups, crop_timeline, show_legend=show_legend)
+fig, any_data = build_gantt_figure(active_groups, crop_timeline, show_legend=show_legend, show_month=show_month)
 
 if not any_data:
     st.info(f"No data recorded for {selected_crop}.")
@@ -1530,7 +1596,7 @@ if dashboard_view == "📅 Reference Timeline":
         label_visibility="collapsed"
     )
 
-    reference_groups = build_reference_groups()
+    reference_groups = build_reference_groups(show_month)
 
     table_group_map = {
         "🐛 Insects": reference_groups[1],
