@@ -764,10 +764,24 @@ RESISTANCE_CODE_INFO = {
 }
 
 
-def build_product_map(product_df, id_column):
+def build_product_map(product_df, id_column, crop_id=None):
 
     if product_df.empty or id_column not in product_df.columns:
         return {}
+
+    # Scope to the selected crop FIRST. pest_ins/disease_fun both
+    # carry their own crop_id — if the same pest/disease species
+    # is used across multiple crops (e.g. "Whitefly" affecting
+    # both rice and durian) they can end up sharing the same
+    # pest_id/disease_id. Without this filter, a product entered
+    # for one crop would silently show up for every other crop
+    # that happens to reuse that same id — including crops with
+    # NO product data entered at all.
+    if crop_id is not None and "crop_id" in product_df.columns:
+        product_df = product_df[product_df["crop_id"] == crop_id]
+
+        if product_df.empty:
+            return {}
 
     # Product-identifying fields — deliberately excludes crop_id
     # and the row's own id (her_id/ins_id/fun_id). If the same
@@ -925,11 +939,11 @@ def format_other_products(companies_products, category_label=None):
     return f"Other registered product(s), {resistance_label} group(s): " + ", ".join(codes)
 
 
-weed_product_map = build_product_map(weed_her, "weed_id")
+weed_product_map = build_product_map(weed_her, "weed_id", crop_id)
 
-pest_product_map = build_product_map(pest_ins, "pest_id")
+pest_product_map = build_product_map(pest_ins, "pest_id", crop_id)
 
-disease_product_map = build_product_map(disease_fun, "disease_id")
+disease_product_map = build_product_map(disease_fun, "disease_id", crop_id)
 
 
 COVERED_COLOR = "#2ca02c"     # green
