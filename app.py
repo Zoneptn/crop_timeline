@@ -1,4 +1,5 @@
-"""
+
+   """
 Product Segmentation Dashboard
 -------------------------------
 Adapted from the "Crop Threat & Input Dashboard" base. Same top track
@@ -123,9 +124,32 @@ def assign_lanes(group: pd.DataFrame):
 # "other companies" count for context on red boxes.
 # ----------------------------------------------------------------------
 
+def _default_product_html(g: pd.DataFrame, code_col: str, code_label: str) -> str:
+    lines = []
+    for _, r in g.iterrows():
+        trade = r.get("trade_name", "")
+        common = r.get("common_name", "")
+        conc = r.get("concentration", "")
+        form = r.get("formulation_type", "")
+        code = r.get(code_col, "")
+        lines.append(f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}]")
+    return "<br>".join(lines) if lines else "—"
+
+
+def _fertilizer_product_html(g: pd.DataFrame, code_col: str, code_label: str) -> str:
+    lines = []
+    for _, r in g.iterrows():
+        formula = r.get("formula", "")
+        brand = r.get("brand", "")
+        ftype = r.get("type", "")
+        lines.append(f"• <b>{brand}</b> — {formula} ({ftype})")
+    return "<br>".join(lines) if lines else "—"
+
+
 def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
                       key_cols: list, company: str,
-                      code_col: str, code_label: str) -> pd.DataFrame:
+                      code_col: str, code_label: str,
+                      product_html_fn=_default_product_html) -> pd.DataFrame:
     df = window_df.copy()
 
     if product_df.empty or not company:
@@ -138,21 +162,10 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
     company_products = product_df[product_df["company"].astype(str) == str(company)]
     other_products = product_df[product_df["company"].astype(str) != str(company)]
 
-    def _product_html(g):
-        lines = []
-        for _, r in g.iterrows():
-            trade = r.get("trade_name", "")
-            common = r.get("common_name", "")
-            conc = r.get("concentration", "")
-            form = r.get("formulation_type", "")
-            code = r.get(code_col, "")
-            lines.append(f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}]")
-        return "<br>".join(lines) if lines else "—"
-
     matched_map = {}
     if not company_products.empty:
         for keys, g in company_products.groupby(key_cols, dropna=False):
-            matched_map[keys if isinstance(keys, tuple) else (keys,)] = _product_html(g)
+            matched_map[keys if isinstance(keys, tuple) else (keys,)] = product_html_fn(g, code_col, code_label)
 
     other_count_map = {}
     if not other_products.empty:
@@ -441,7 +454,8 @@ def fertilizer_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
         product_df_all[product_df_all["type"].astype(str) == type_choice]
 
     key_cols = ["stage_id"]
-    df = compute_coverage(window_df, product_df, key_cols, company, "type", "Type")
+    df = compute_coverage(window_df, product_df, key_cols, company, "type", "Type",
+                           product_html_fn=_fertilizer_product_html)
 
     row_label_map = dict(zip(df["stage_id"], df["stage"]))
 
