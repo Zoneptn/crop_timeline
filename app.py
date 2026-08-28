@@ -192,17 +192,22 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
                           stage_df: pd.DataFrame = None, stage_label_col: str = "stage",
                           show_legend: bool = True, row_label_map: dict = None,
                           custom_color_map: dict = None,
-                          force_show_legend: bool = False) -> go.Figure:
+                          force_show_legend: bool = False,
+                          sort_col: str = None) -> go.Figure:
     if df.empty:
         fig = go.Figure()
         fig.update_layout(height=120, title=f"{title} — no data for this crop")
         return fig
 
+    # Rows are grouped/ordered by sort_col (e.g. weed type, insect order)
+    # so related items sit together, even though color now encodes
+    # coverage (color_col) rather than that category.
+    order_key = sort_col if sort_col else color_col
     order_df = (
         df.groupby(row_col)
-        .agg(**{color_col: (color_col, "first"), "start_day": ("start_day", "min")})
+        .agg(**{order_key: (order_key, "first"), "start_day": ("start_day", "min")})
         .reset_index()
-        .sort_values([color_col, "start_day"])
+        .sort_values([order_key, "start_day"])
     )
     row_order = order_df[row_col].tolist()
     row_to_base = {r: i for i, r in enumerate(row_order)}
@@ -330,13 +335,15 @@ def weed_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
     df = compute_coverage(window_df, product_df, key_cols, company, "hrac_code", "HRAC")
 
     name_col = "weed_name_th" if is_thai else "weed_science"
-    row_label_map = dict(zip(df["weed_science"], df[name_col]))
+    row_label_map = {
+        r: f"[{t}] {n}" for r, n, t in zip(df["weed_science"], df[name_col], df["type"])
+    }
 
     def hover(row):
         base = (
             f"<b><i>{row['weed_science']}</i></b><br>"
             f"{row['weed_name_en']} / {row['weed_name_th']}<br>"
-            f"Stage: {row.get('weed_stage', '')}<br>"
+            f"Type: {row.get('type', '')} | Stage: {row.get('weed_stage', '')}<br>"
             f"Day {row['start_day']}–{row['end_day']}<br><br>"
         )
         if row["covered"]:
@@ -347,7 +354,7 @@ def weed_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
     fig = build_timeline_chart(df, row_col="weed_science", color_col="coverage_status",
                                 hover_fn=hover, title="Weed Control Windows",
                                 stage_df=crop_stage_df, stage_label_col=stage_label_col,
-                                row_label_map=row_label_map,
+                                row_label_map=row_label_map, sort_col="type",
                                 custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["weed_stage", "weed_science", "weed_name_en", "weed_name_th",
                    "type", "start_day", "end_day", "coverage_status"]
@@ -363,7 +370,9 @@ def pest_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
     df = compute_coverage(window_df, product_df, key_cols, company, "irac_code", "IRAC")
 
     name_col = "pest_name_th" if is_thai else "pest_name_en"
-    row_label_map = dict(zip(df["pest_name_en"], df[name_col]))
+    row_label_map = {
+        r: f"[{o}] {n}" for r, n, o in zip(df["pest_name_en"], df[name_col], df["order"])
+    }
 
     def hover(row):
         base = (
@@ -380,7 +389,7 @@ def pest_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
     fig = build_timeline_chart(df, row_col="pest_name_en", color_col="coverage_status",
                                 hover_fn=hover, title="Pest Pressure Windows",
                                 stage_df=crop_stage_df, stage_label_col=stage_label_col,
-                                row_label_map=row_label_map,
+                                row_label_map=row_label_map, sort_col="order",
                                 custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["pest_name_en", "pest_name_th", "order", "start_day", "end_day", "coverage_status"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
@@ -395,12 +404,15 @@ def disease_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
     df = compute_coverage(window_df, product_df, key_cols, company, "frac_code", "FRAC")
 
     name_col = "disease_name_th" if is_thai else "disease_name_en"
-    row_label_map = dict(zip(df["disease_name_sc"], df[name_col]))
+    row_label_map = {
+        r: f"[{t}] {n}" for r, n, t in zip(df["disease_name_sc"], df[name_col], df["type"])
+    }
 
     def hover(row):
         base = (
             f"<b><i>{row['disease_name_sc']}</i></b><br>"
             f"{row['disease_name_en']} / {row['disease_name_th']}<br>"
+            f"Type: {row.get('type', '')}<br>"
             f"Day {row['start_day']}–{row['end_day']}<br><br>"
         )
         if row["covered"]:
@@ -411,7 +423,7 @@ def disease_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
     fig = build_timeline_chart(df, row_col="disease_name_sc", color_col="coverage_status",
                                 hover_fn=hover, title="Disease Pressure Windows",
                                 stage_df=crop_stage_df, stage_label_col=stage_label_col,
-                                row_label_map=row_label_map,
+                                row_label_map=row_label_map, sort_col="type",
                                 custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["disease_name_sc", "disease_name_en", "disease_name_th",
                    "type", "start_day", "end_day", "coverage_status"]
@@ -486,7 +498,7 @@ if stage_df_all.empty:
 crop_lookup = stage_df_all[["crop_id", "crop"]].drop_duplicates()
 crop_name_to_id = dict(zip(crop_lookup["crop"], crop_lookup["crop_id"]))
 
-col1, col2, col3 = st.columns([2, 1, 1])
+col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 with col1:
     crop_choice = st.selectbox("Crop", list(crop_name_to_id.keys()))
 crop_id = crop_name_to_id[crop_choice]
@@ -500,8 +512,8 @@ with col2:
         st.warning("No companies found for this crop across weed_her / pest_ins / disease_fun / fertilizer.")
 with col3:
     board_choice = st.selectbox("Board", list(BOARDS.keys()), index=0)
-
-stage_label_choice = st.sidebar.radio("Label language", ["English", "Thai"], horizontal=True)
+with col4:
+    stage_label_choice = st.radio("Label language", ["English", "Thai"], horizontal=True)
 label_col = "stage" if stage_label_choice == "English" else "stage_th"
 
 crop_stage_df = stage_df_all[stage_df_all["crop_id"] == crop_id]
@@ -512,11 +524,9 @@ if crop_stage_df.empty:
 st.subheader(f"{BOARD_TITLES[board_choice]} — {company_choice or 'no company selected'}")
 
 if company_choice:
-    fig, detail_df, covered_n, total_n = BOARDS[board_choice](
+    fig, detail_df, _covered_n, _total_n = BOARDS[board_choice](
         crop_id, sheets, crop_stage_df, label_col, company_choice
     )
-    if total_n:
-        st.caption(f"Coverage: **{covered_n} of {total_n}** windows have a product from **{company_choice}**.")
     st.plotly_chart(fig, use_container_width=True)
 
     if detail_df.empty:
