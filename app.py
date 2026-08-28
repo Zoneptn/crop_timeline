@@ -378,7 +378,7 @@ def pest_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
         base = (
             f"<b>{row['pest_name_en']}</b><br>"
             f"{row['pest_name_th']}<br>"
-            f"Order: {row.get('order', '')}<br>"
+            f"Insect order: {row.get('order', '')}<br>"
             f"Day {row['start_day']}–{row['end_day']}<br><br>"
         )
         if row["covered"]:
@@ -387,7 +387,7 @@ def pest_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
         return base + f"<b>{company}: no product</b>{extra}<extra></extra>"
 
     fig = build_timeline_chart(df, row_col="pest_name_en", color_col="coverage_status",
-                                hover_fn=hover, title="Pest Pressure Windows",
+                                hover_fn=hover, title="Insect Pressure Windows",
                                 stage_df=crop_stage_df, stage_label_col=stage_label_col,
                                 row_label_map=row_label_map, sort_col="order",
                                 custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
@@ -432,7 +432,13 @@ def disease_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
 
 def fertilizer_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
     window_df = sheets["crop_fer"][sheets["crop_fer"]["crop_id"] == crop_id].copy()
-    product_df = sheets["fertilizer"][sheets["fertilizer"]["crop_id"] == crop_id].copy()
+    product_df_all = sheets["fertilizer"][sheets["fertilizer"]["crop_id"] == crop_id].copy()
+
+    fert_types = sorted(product_df_all["type"].dropna().astype(str).unique().tolist()) \
+        if "type" in product_df_all.columns else []
+    type_choice = st.selectbox("Fertilizer type", ["All"] + fert_types)
+    product_df = product_df_all if type_choice == "All" else \
+        product_df_all[product_df_all["type"].astype(str) == type_choice]
 
     key_cols = ["stage_id"]
     df = compute_coverage(window_df, product_df, key_cols, company, "type", "Type")
@@ -457,14 +463,14 @@ def fertilizer_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
 
 BOARDS = {
     "Weed": weed_board,
-    "Pest": pest_board,
+    "Insect": pest_board,
     "Disease": disease_board,
     "Fertilizer": fertilizer_board,
 }
 
 BOARD_TITLES = {
     "Weed": "Weed Control Windows",
-    "Pest": "Pest Pressure Windows",
+    "Insect": "Insect Pressure Windows",
     "Disease": "Disease Pressure Windows",
     "Fertilizer": "Fertilizer Application Windows",
 }
