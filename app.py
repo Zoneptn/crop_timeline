@@ -255,7 +255,7 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
             annotations.append(dict(
                 x=mid, y=STAGE_ROW_Y, xref="x", yref="y",
                 text=str(srow[stage_label_col]), showarrow=False,
-                font=dict(color="white", size=15, family="Georgia, serif"),
+                font=dict(color="white", size=17, family="Georgia, serif"),
                 xanchor="center", yanchor="middle",
             ))
         top_of_axis = STAGE_ROW_Y - 0.8
@@ -292,8 +292,8 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
 
     total_lane_rows = sum(row_lane_counts.values())
 
-    xaxis = dict(showgrid=True, title=dict(text="Day after planting", font=dict(size=17)),
-                 tickfont=dict(size=16))
+    xaxis = dict(showgrid=True, title=dict(text="Day after planting", font=dict(size=19)),
+                 tickfont=dict(size=18))
     if stage_df is not None and not stage_df.empty:
         sdf = stage_df.sort_values("start_day").reset_index(drop=True)
         stage_min = float(sdf["start_day"].min())
@@ -318,7 +318,7 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
 
     fig.update_layout(
         barmode="overlay",
-        height=max(240, 150 + total_lane_rows * 50),
+        height=max(240, 150 + total_lane_rows * 54),
         margin=dict(l=10, r=10, t=30, b=10),
         xaxis=xaxis,
         yaxis=dict(
@@ -327,15 +327,15 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
             ticktext=y_ticktext,
             range=[n_rows - 0.5, top_of_axis],
             title="",
-            tickfont=dict(size=17),
+            tickfont=dict(size=19),
             automargin=True,
         ),
         annotations=annotations,
         showlegend=(multi_category or force_show_legend) and show_legend,
         legend_title_text="Coverage",
-        legend=dict(font=dict(size=15)),
-        hoverlabel=dict(font=dict(size=18), align="left"),
-        font=dict(size=15),
+        legend=dict(font=dict(size=17)),
+        hoverlabel=dict(font=dict(size=20), align="left"),
+        font=dict(size=17),
     )
     return fig
 
