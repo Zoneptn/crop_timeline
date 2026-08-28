@@ -1,5 +1,4 @@
-
-   """
+"""
 Product Segmentation Dashboard
 -------------------------------
 Adapted from the "Crop Threat & Input Dashboard" base. Same top track
