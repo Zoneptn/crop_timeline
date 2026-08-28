@@ -255,7 +255,7 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
             annotations.append(dict(
                 x=mid, y=STAGE_ROW_Y, xref="x", yref="y",
                 text=str(srow[stage_label_col]), showarrow=False,
-                font=dict(color="white", size=12, family="Georgia, serif"),
+                font=dict(color="white", size=13, family="Georgia, serif"),
                 xanchor="center", yanchor="middle",
             ))
         top_of_axis = STAGE_ROW_Y - 0.8
@@ -292,7 +292,8 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
 
     total_lane_rows = sum(row_lane_counts.values())
 
-    xaxis = dict(showgrid=True, title="Day after planting")
+    xaxis = dict(showgrid=True, title=dict(text="Day after planting", font=dict(size=15)),
+                 tickfont=dict(size=14))
     if stage_df is not None and not stage_df.empty:
         sdf = stage_df.sort_values("start_day").reset_index(drop=True)
         stage_min = float(sdf["start_day"].min())
@@ -317,7 +318,7 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
 
     fig.update_layout(
         barmode="overlay",
-        height=max(240, 150 + total_lane_rows * 42),
+        height=max(240, 150 + total_lane_rows * 46),
         margin=dict(l=10, r=10, t=30, b=10),
         xaxis=xaxis,
         yaxis=dict(
@@ -326,10 +327,15 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
             ticktext=y_ticktext,
             range=[n_rows - 0.5, top_of_axis],
             title="",
+            tickfont=dict(size=15),
+            automargin=True,
         ),
         annotations=annotations,
         showlegend=(multi_category or force_show_legend) and show_legend,
         legend_title_text="Coverage",
+        legend=dict(font=dict(size=13)),
+        hoverlabel=dict(font=dict(size=16), align="left"),
+        font=dict(size=13),
     )
     return fig
 
