@@ -238,9 +238,10 @@ def build_timeline_chart(df: pd.DataFrame, row_col: str,
         fig.update_layout(height=120, title=f"{title} — no data for this crop")
         return fig
 
-    # Rows are grouped/ordered by sort_col (e.g. weed type, insect order)
-    # so related items sit together, even though color now encodes
-    # coverage (color_col) rather than that category.
+    # Rows are grouped/ordered by sort_col (e.g. weed type, insect order,
+    # or start_day for fertilizer application sequence) so related items
+    # sit together, even though color now encodes coverage (color_col)
+    # rather than that category.
     order_key = sort_col if sort_col else color_col
     order_df = (
         df.groupby(row_col)
@@ -498,10 +499,12 @@ def fertilizer_board(crop_id, sheets, crop_stage_df, stage_label_col, company):
         extra = f"<br><i>{row['other_company_count']} other company(ies) cover this</i>" if row['other_company_count'] else ""
         return base + f"<b>{company}: no product</b>{extra}<extra></extra>"
 
+    # sort_col="start_day" — order rows chronologically (1st, 2nd, 3rd
+    # application...) instead of grouping by coverage color first.
     fig = build_timeline_chart(df, row_col="stage_id", color_col="coverage_status",
                                 hover_fn=hover, title="Fertilizer Application Windows",
                                 stage_df=crop_stage_df, stage_label_col=stage_label_col,
-                                row_label_map=row_label_map,
+                                row_label_map=row_label_map, sort_col="start_day",
                                 custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["stage", "start_day", "end_day", "coverage_status"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
