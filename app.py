@@ -73,7 +73,7 @@ def maybe_show_rice_fertilizer_note(crop_choice: str, board_choice: str):
 #   weed_her      : crop_id, ws_id, weed_id, weed_name_en, weed_name_th,
 #                   common_name, hrac_code
 #   crop_pest     : crop_id, pest_id, pest_name_en, pest_name_th, order,
-#                   start_day, end_day
+#                   rank, start_day, end_day
 #   pest_ins      : crop_id, pest_id, pest_name_th, common_name, irac_code
 #   crop_disease  : crop_id, disease_id, disease_name_en, disease_name_th,
 #                   disease_name_sc, type, start_day, end_day
@@ -159,17 +159,19 @@ def aggregate_chemicals(merged: pd.DataFrame, group_cols: list,
 def build_timeline_chart_threat(df: pd.DataFrame, row_col: str, label_col: str,
                                  color_col: str, hover_fn, title: str,
                                  stage_df: pd.DataFrame = None, stage_label_col: str = "stage",
-                                 show_legend: bool = True, row_label_map: dict = None) -> go.Figure:
+                                 show_legend: bool = True, row_label_map: dict = None,
+                                 sort_col: str = None) -> go.Figure:
     if df.empty:
         fig = go.Figure()
         fig.update_layout(height=120, title=f"{title} — no data for this crop")
         return fig
 
+    order_key = sort_col if sort_col else color_col
     order_df = (
         df.groupby(row_col)
-        .agg(**{color_col: (color_col, "first"), "start_day": ("start_day", "min")})
+        .agg(**{order_key: (order_key, "first"), "start_day": ("start_day", "min")})
         .reset_index()
-        .sort_values([color_col, "start_day"])
+        .sort_values([order_key, "start_day"])
     )
     row_order = order_df[row_col].tolist()
     row_to_base = {r: i for i, r in enumerate(row_order)}
@@ -335,6 +337,11 @@ def insect_board_threat(crop_id, sheets, crop_stage_df, stage_label_col):
     pest = sheets["crop_pest"]
     ins = sheets["pest_ins"]
     raw = pest[pest["crop_id"] == crop_id].copy()
+    has_rank = "rank" in raw.columns
+    if has_rank:
+        # Unranked rows sort to the bottom instead of crashing/reordering
+        # unpredictably.
+        raw["rank"] = pd.to_numeric(raw["rank"], errors="coerce").fillna(float("inf"))
     ins_c = ins[ins["crop_id"] == crop_id]
     merged = raw.merge(
         ins_c[["pest_id", "common_name", "irac_code"]],
@@ -343,6 +350,8 @@ def insect_board_threat(crop_id, sheets, crop_stage_df, stage_label_col):
 
     group_cols = ["crop_id", "pest_id", "pest_name_en", "pest_name_th",
                   "order", "start_day", "end_day"]
+    if has_rank:
+        group_cols.append("rank")
     agg = aggregate_chemicals(merged, group_cols, "common_name", "irac_code", "IRAC")
     df = merged[group_cols].drop_duplicates().merge(agg, on=group_cols)
 
@@ -350,10 +359,12 @@ def insect_board_threat(crop_id, sheets, crop_stage_df, stage_label_col):
     row_label_map = dict(zip(df["pest_name_en"], df[name_col]))
 
     def hover(row):
+        rank_line = f"Rank: {int(row['rank'])}<br>" if has_rank and row['rank'] != float("inf") else ""
         return (
             f"<b>{row['pest_name_en']}</b><br>"
             f"{row['pest_name_th']}<br>"
             f"Insect order: {row.get('order', '')}<br>"
+            f"{rank_line}"
             f"Day {row['start_day']}–{row['end_day']}<br>"
             f"<br><b>Products:</b><br>{row['chem_list_html']}"
             "<extra></extra>"
@@ -361,11 +372,14 @@ def insect_board_threat(crop_id, sheets, crop_stage_df, stage_label_col):
 
     fig = build_timeline_chart_threat(df, row_col="pest_name_en", label_col="pest_name_en",
                                        color_col="order", hover_fn=hover,
+                                       sort_col="rank" if has_rank else None,
                                        title="Insect Pressure Windows",
                                        stage_df=crop_stage_df, stage_label_col=stage_label_col,
                                        row_label_map=row_label_map)
     detail_cols = ["pest_name_en", "pest_name_th", "order", "common_name",
                    "irac_code", "start_day", "end_day"]
+    if has_rank:
+        detail_cols.insert(3, "rank")
     return fig, merged[detail_cols], detail_cols
 
 
@@ -553,7 +567,7 @@ def render_threat_view():
 #                   company, common_name, concentration, formulation_type,
 #                   hrac_code
 #   crop_pest     : crop_id, pest_id, pest_name_en, pest_name_th, order,
-#                   start_day, end_day
+#                   rank, start_day, end_day
 #   pest_ins      : crop_id, pest_id, pest_name_th, trade_name, company,
 #                   common_name, concentration, formulation_type, irac_code
 #   crop_disease  : crop_id, disease_id, disease_name_en, disease_name_th,
@@ -869,6 +883,12 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
     window_df = sheets["crop_pest"][sheets["crop_pest"]["crop_id"] == crop_id].copy()
     product_df = sheets["pest_ins"][sheets["pest_ins"]["crop_id"] == crop_id].copy()
 
+    has_rank = "rank" in window_df.columns
+    if has_rank:
+        # Unranked rows sort to the bottom instead of crashing/reordering
+        # unpredictably.
+        window_df["rank"] = pd.to_numeric(window_df["rank"], errors="coerce").fillna(float("inf"))
+
     key_cols = ["pest_id"]
     df = compute_coverage(window_df, product_df, key_cols, company, "irac_code", "IRAC")
 
@@ -878,10 +898,12 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
     }
 
     def hover(row):
+        rank_line = f"Rank: {int(row['rank'])}<br>" if has_rank and row['rank'] != float("inf") else ""
         base = (
             f"<b>{row['pest_name_en']}</b><br>"
             f"{row['pest_name_th']}<br>"
             f"Insect order: {row.get('order', '')}<br>"
+            f"{rank_line}"
             f"Day {row['start_day']}–{row['end_day']}<br><br>"
         )
         if row["covered"]:
@@ -892,9 +914,12 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
     fig = build_timeline_chart_cov(df, row_col="pest_name_en", color_col="coverage_status",
                                     hover_fn=hover, title="Insect Pressure Windows",
                                     stage_df=crop_stage_df, stage_label_col=stage_label_col,
-                                    row_label_map=row_label_map, sort_col="order",
+                                    row_label_map=row_label_map,
+                                    sort_col="rank" if has_rank else "order",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["pest_name_en", "pest_name_th", "order", "start_day", "end_day", "coverage_status"]
+    if has_rank:
+        detail_cols.insert(3, "rank")
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
 
