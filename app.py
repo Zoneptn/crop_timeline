@@ -559,39 +559,76 @@ def render_threat_view():
 
 # =====================================================================
 # =========================== COVERAGE VIEW ===========================
-# Reads crop_timeline_coverage.xlsx:
+# Reads crop_timeline_coverage.xlsx.
+#
+# Window-definition sheets (one row per crop/stage window):
 #   crop_stage    : crop_id, crop, stage, stage_th, start_day, end_day
 #   crop_weeds    : crop_id, ws_id, weed_stage, weed_id, weed_name_en,
 #                   weed_name_th, weed_science, type, start_day, end_day
-#   weed_her      : crop_id, ws_id, weed_id, weed_name_th, trade_name,
-#                   company, common_name, concentration, formulation_type,
-#                   hrac_code
 #   crop_pest     : crop_id, pest_id, pest_name_en, pest_name_th, order,
-#                   rank, start_day, end_day
-#   pest_ins      : crop_id, pest_id, pest_name_th, trade_name, company,
-#                   common_name, concentration, formulation_type, irac_code
+#                   start_day, end_day, rank
 #   crop_disease  : crop_id, disease_id, disease_name_en, disease_name_th,
 #                   disease_name_sc, type, start_day, end_day
-#   disease_fun   : crop_id, disease_id, disease_name_th, trade_name,
-#                   company, common_name, concentration, formulation_type,
-#                   frac_code
 #   crop_fer      : crop_id, crop, stage_id, stage, start_day, end_day
-#   fertilizer    : crop_id, stage_id, formula, brand, company, stage, type
+#
+# Product MASTER sheets (one row per product — single source of truth
+# for trade name, company, concentration, code, and tier):
+#   prod_her : her_id, trade_name, company, common_name, concentration,
+#              formulation_type, hrac_code, tier
+#   prod_ins : ins_id, trade_name, company, common_name, concentration,
+#              formulation_type, irac_code, tier
+#   prod_fun : fun_id, trade_name, company, common_name, concentration,
+#              formulation_type, frac_code, tier
+#   prod_fer : fer_id, brand, formula, company, type, tier
+#
+# JUNCTION sheets (slim — link a window to a product by ID; kept as
+# separate sheets per category so they stay easy to scan/edit):
+#   weed_her    : crop_id, ws_id, weed_id, weed_name_th, her_id, trade_name
+#   pest_ins    : crop_id, pest_id, pest_name_th, ins_id, trade_name
+#   disease_fun : crop_id, disease_id, disease_name_th, fun_id, trade_name
+#   fertilizer  : crop_id, stage_id, fer_id, stage
+#
+# tier (on every master sheet) expects: Generic / Medium / Premium.
+# Blank or unrecognized values fall back to Generic. company must exist
+# on each master sheet for the company filter/coverage check to work —
+# if it's missing (e.g. prod_fer hasn't been given one yet), that
+# category is silently skipped rather than crashing.
 # =====================================================================
 
 DEFAULT_PATH_COV = "crop_timeline_coverage.xlsx"
 
 SHEET_NAMES_COV = [
     "crop_stage",
-    "crop_weeds", "weed_her",
-    "crop_pest", "pest_ins",
-    "crop_disease", "disease_fun",
-    "crop_fer", "fertilizer",
+    "crop_weeds", "weed_her", "prod_her",
+    "crop_pest", "pest_ins", "prod_ins",
+    "crop_disease", "disease_fun", "prod_fun",
+    "crop_fer", "fertilizer", "prod_fer",
 ]
+
+# junction sheet -> (its id column, master sheet, master's id column)
+CATEGORY_CONFIG_COV = {
+    "weed_her": {"junction_id": "her_id", "master": "prod_her", "master_id": "her_id",
+                 "code_col": "hrac_code", "code_label": "HRAC"},
+    "pest_ins": {"junction_id": "ins_id", "master": "prod_ins", "master_id": "ins_id",
+                 "code_col": "irac_code", "code_label": "IRAC"},
+    "disease_fun": {"junction_id": "fun_id", "master": "prod_fun", "master_id": "fun_id",
+                     "code_col": "frac_code", "code_label": "FRAC"},
+    "fertilizer": {"junction_id": "fer_id", "master": "prod_fer", "master_id": "fer_id",
+                   "code_col": "type", "code_label": "Type"},
+}
 
 COVERED_COLOR = "#4CAF50"      # green — company has a product
 NOT_COVERED_COLOR = "#E63946"  # red   — company has no product
 COVERAGE_COLOR_MAP = {"Has Product": COVERED_COLOR, "No Product": NOT_COVERED_COLOR}
+
+TIER_ORDER = ["Premium", "Medium", "Generic"]
+TIER_BADGE = {"Premium": "🟣 Premium", "Medium": "🟡 Medium", "Generic": "⚪ Generic"}
+
+
+def normalize_tier(val) -> str:
+    s = str(val).strip().title() if pd.notna(val) else ""
+    return s if s in TIER_ORDER else "Generic"
+
 
 BOARD_TITLES_COV = {
     "Weed": "Weed Control Windows",
@@ -633,6 +670,34 @@ def get_file_cov():
     return None
 
 
+def load_product_df(sheets: dict, junction_name: str, crop_id) -> pd.DataFrame:
+    """Join a junction sheet to its product master sheet, scoped to one
+    crop. The master sheet is the single source of truth: any column
+    that exists on both sides (e.g. a leftover trade_name kept on the
+    junction sheet for readability) is dropped from the junction copy
+    before merging, so the master's value always wins. Returns an empty
+    DataFrame if either sheet is missing/empty or the id columns aren't
+    present."""
+    cfg = CATEGORY_CONFIG_COV[junction_name]
+    junction = sheets.get(junction_name, pd.DataFrame())
+    master = sheets.get(cfg["master"], pd.DataFrame())
+    j_id, m_id = cfg["junction_id"], cfg["master_id"]
+
+    if junction.empty or master.empty or j_id not in junction.columns or m_id not in master.columns:
+        return pd.DataFrame()
+
+    j = junction[junction["crop_id"] == crop_id].copy()
+    if j.empty:
+        return j
+
+    overlap = [c for c in j.columns if c in master.columns and c != j_id]
+    j = j.drop(columns=overlap)
+
+    if j_id == m_id:
+        return j.merge(master, on=j_id, how="left")
+    return j.merge(master, left_on=j_id, right_on=m_id, how="left")
+
+
 def _default_product_html(g: pd.DataFrame, code_col: str, code_label: str) -> str:
     lines = []
     for _, r in g.iterrows():
@@ -641,7 +706,8 @@ def _default_product_html(g: pd.DataFrame, code_col: str, code_label: str) -> st
         conc = r.get("concentration", "")
         form = r.get("formulation_type", "")
         code = r.get(code_col, "")
-        lines.append(f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}]")
+        tier = TIER_BADGE[normalize_tier(r.get("tier"))]
+        lines.append(f"• <b>{trade}</b> — {common} {conc} ({form}) [{code_label} {code}] {tier}")
     return "<br>".join(lines) if lines else "—"
 
 
@@ -651,7 +717,8 @@ def _fertilizer_product_html(g: pd.DataFrame, code_col: str, code_label: str) ->
         formula = r.get("formula", "")
         brand = r.get("brand", "")
         ftype = r.get("type", "")
-        lines.append(f"• <b>{brand}</b> — {formula} ({ftype})")
+        tier = TIER_BADGE[normalize_tier(r.get("tier"))]
+        lines.append(f"• <b>{brand}</b> — {formula} ({ftype}) {tier}")
     return "<br>".join(lines) if lines else "—"
 
 
@@ -661,20 +728,25 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
                       product_html_fn=_default_product_html) -> pd.DataFrame:
     df = window_df.copy()
 
-    if product_df.empty or not company:
+    if product_df.empty or not company or "company" not in product_df.columns:
         df["covered"] = False
         df["coverage_status"] = "No Product"
         df["product_list_html"] = "—"
         df["other_company_count"] = 0
+        df["tier_mix"] = "—"
         return df
 
     company_products = product_df[product_df["company"].astype(str) == str(company)]
     other_products = product_df[product_df["company"].astype(str) != str(company)]
 
     matched_map = {}
+    tier_mix_map = {}
     if not company_products.empty:
         for keys, g in company_products.groupby(key_cols, dropna=False):
-            matched_map[keys if isinstance(keys, tuple) else (keys,)] = product_html_fn(g, code_col, code_label)
+            k = keys if isinstance(keys, tuple) else (keys,)
+            matched_map[k] = product_html_fn(g, code_col, code_label)
+            tiers_present = {normalize_tier(t) for t in g.get("tier", pd.Series(dtype=object))}
+            tier_mix_map[k] = ", ".join(t for t in TIER_ORDER if t in tiers_present) or "—"
 
     other_count_map = {}
     if not other_products.empty:
@@ -690,18 +762,18 @@ def compute_coverage(window_df: pd.DataFrame, product_df: pd.DataFrame,
     df["coverage_status"] = df["covered"].map({True: "Has Product", False: "No Product"})
     df["product_list_html"] = df["_key"].map(lambda k: matched_map.get(k, "—"))
     df["other_company_count"] = df["_key"].map(lambda k: other_count_map.get(k, 0))
+    df["tier_mix"] = df["_key"].map(lambda k: tier_mix_map.get(k, "—"))
     df = df.drop(columns=["_key"])
     return df
 
 
 def get_companies_for_crop(sheets: dict, crop_id) -> list:
     companies = set()
-    for name in ("weed_her", "pest_ins", "disease_fun", "fertilizer"):
-        d = sheets.get(name, pd.DataFrame())
-        if d.empty or "company" not in d.columns:
+    for junction_name in CATEGORY_CONFIG_COV:
+        merged = load_product_df(sheets, junction_name, crop_id)
+        if merged.empty or "company" not in merged.columns:
             continue
-        d = d[d["crop_id"] == crop_id]
-        companies.update(d["company"].dropna().astype(str).unique().tolist())
+        companies.update(merged["company"].dropna().astype(str).unique().tolist())
     return sorted(companies)
 
 
@@ -846,7 +918,7 @@ def build_timeline_chart_cov(df: pd.DataFrame, row_col: str,
 def weed_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
     is_thai = stage_label_col.endswith("_th")
     window_df = sheets["crop_weeds"][sheets["crop_weeds"]["crop_id"] == crop_id].copy()
-    product_df = sheets["weed_her"][sheets["weed_her"]["crop_id"] == crop_id].copy()
+    product_df = load_product_df(sheets, "weed_her", crop_id)
 
     key_cols = ["ws_id", "weed_id"]
     df = compute_coverage(window_df, product_df, key_cols, company, "hrac_code", "HRAC")
@@ -874,14 +946,14 @@ def weed_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     row_label_map=row_label_map, sort_col="type",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["weed_stage", "weed_science", "weed_name_en", "weed_name_th",
-                   "type", "start_day", "end_day", "coverage_status"]
+                   "type", "start_day", "end_day", "coverage_status", "tier_mix"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
 
 def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
     is_thai = stage_label_col.endswith("_th")
     window_df = sheets["crop_pest"][sheets["crop_pest"]["crop_id"] == crop_id].copy()
-    product_df = sheets["pest_ins"][sheets["pest_ins"]["crop_id"] == crop_id].copy()
+    product_df = load_product_df(sheets, "pest_ins", crop_id)
 
     has_rank = "rank" in window_df.columns
     if has_rank:
@@ -917,7 +989,8 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     row_label_map=row_label_map,
                                     sort_col="rank" if has_rank else "order",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
-    detail_cols = ["pest_name_en", "pest_name_th", "order", "start_day", "end_day", "coverage_status"]
+    detail_cols = ["pest_name_en", "pest_name_th", "order", "start_day", "end_day",
+                   "coverage_status", "tier_mix"]
     if has_rank:
         detail_cols.insert(3, "rank")
     return fig, df[detail_cols], df["covered"].sum(), len(df)
@@ -926,7 +999,7 @@ def pest_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
 def disease_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
     is_thai = stage_label_col.endswith("_th")
     window_df = sheets["crop_disease"][sheets["crop_disease"]["crop_id"] == crop_id].copy()
-    product_df = sheets["disease_fun"][sheets["disease_fun"]["crop_id"] == crop_id].copy()
+    product_df = load_product_df(sheets, "disease_fun", crop_id)
 
     key_cols = ["disease_id"]
     df = compute_coverage(window_df, product_df, key_cols, company, "frac_code", "FRAC")
@@ -954,18 +1027,18 @@ def disease_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
                                     row_label_map=row_label_map, sort_col="type",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
     detail_cols = ["disease_name_sc", "disease_name_en", "disease_name_th",
-                   "type", "start_day", "end_day", "coverage_status"]
+                   "type", "start_day", "end_day", "coverage_status", "tier_mix"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
 
 def fertilizer_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, company):
     window_df = sheets["crop_fer"][sheets["crop_fer"]["crop_id"] == crop_id].copy()
-    product_df_all = sheets["fertilizer"][sheets["fertilizer"]["crop_id"] == crop_id].copy()
+    product_df_all = load_product_df(sheets, "fertilizer", crop_id)
 
     fert_types = sorted(product_df_all["type"].dropna().astype(str).unique().tolist()) \
         if "type" in product_df_all.columns else []
     type_choice = st.selectbox("Fertilizer type", ["All"] + fert_types, key="cov_fert_type")
-    product_df = product_df_all if type_choice == "All" else \
+    product_df = product_df_all if (type_choice == "All" or "type" not in product_df_all.columns) else \
         product_df_all[product_df_all["type"].astype(str) == type_choice]
 
     key_cols = ["stage_id"]
@@ -981,12 +1054,14 @@ def fertilizer_board_cov(crop_id, sheets, crop_stage_df, stage_label_col, compan
         extra = f"<br><i>{row['other_company_count']} other company(ies) cover this</i>" if row['other_company_count'] else ""
         return base + f"<b>{company}: no product</b>{extra}<extra></extra>"
 
+    # sort_col="start_day" — order rows chronologically (1st, 2nd, 3rd
+    # application...) instead of grouping by coverage color first.
     fig = build_timeline_chart_cov(df, row_col="stage_id", color_col="coverage_status",
                                     hover_fn=hover, title="Fertilizer Application Windows",
                                     stage_df=crop_stage_df, stage_label_col=stage_label_col,
                                     row_label_map=row_label_map, sort_col="start_day",
                                     custom_color_map=COVERAGE_COLOR_MAP, force_show_legend=True)
-    detail_cols = ["stage", "start_day", "end_day", "coverage_status"]
+    detail_cols = ["stage", "start_day", "end_day", "coverage_status", "tier_mix"]
     return fig, df[detail_cols], df["covered"].sum(), len(df)
 
 
