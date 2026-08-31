@@ -53,6 +53,17 @@ def assign_lanes(group: pd.DataFrame):
     return assignment, max(len(lanes_end), 1)
 
 
+RICE_FERTILIZER_NOTE = (
+    "🌾 **Rice fertilizer guideline:** total recommended use is approximately "
+    "**50–75 kg per rai** across all applications combined."
+)
+
+
+def maybe_show_rice_fertilizer_note(crop_choice: str, board_choice: str):
+    if board_choice == "Fertilizer" and "rice" in str(crop_choice).lower():
+        st.info(RICE_FERTILIZER_NOTE)
+
+
 # =====================================================================
 # ============================ THREAT VIEW ============================
 # Reads crop_timeline.xlsx:
@@ -521,6 +532,7 @@ def render_threat_view():
         st.stop()
 
     st.subheader(BOARD_TITLES_THREAT[board_choice])
+    maybe_show_rice_fertilizer_note(crop_choice, board_choice)
     fig, board_df, detail_cols = BOARDS_THREAT[board_choice](crop_id, sheets, crop_stage_df, label_col)
     st.plotly_chart(fig, use_container_width=True)
 
@@ -1012,6 +1024,7 @@ def render_coverage_view():
         st.stop()
 
     st.subheader(f"{BOARD_TITLES_COV[board_choice]} — {company_choice or 'no company selected'}")
+    maybe_show_rice_fertilizer_note(crop_choice, board_choice)
 
     if company_choice:
         fig, detail_df, _covered_n, _total_n = BOARDS_COV[board_choice](
